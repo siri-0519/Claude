@@ -53,3 +53,28 @@ limits:
   state_md_bytes: 4096        # memory/STATE.md hard cap — HR-005
   summary_chars: 200
   session_card_bytes: 3072    # what SessionStart is allowed to inject
+
+# --- RESERVED: content vectors. Nothing computes or reads these yet. ---
+# Decided in ADR-0002; the slot exists so turning it on later needs no migration
+# of existing artifacts.
+#
+# Why NOT in front-matter, when `derives_from` is:
+#   `derives_from` is an ASSERTION — only a person or model knows B came from A,
+#   and losing it loses information, so it travels inside the file.
+#   A vector is DERIVED — always recomputable from the body. Losing it costs CPU,
+#   not information. So it belongs in the rebuildable cache, and artifact files
+#   stay readable by a human instead of carrying a thousand floats.
+embedding:
+  enabled: false
+  store: .meta/vectors.jsonl    # gitignored cache; .meta/** is already machine-owned
+  record: [id, model, body_hash, vec]
+  # A cached vector is invalid when either field disagrees with the artifact's
+  # current state. body_hash is the SAME primitive `derives_from` pins, so a model
+  # swap invalidates the cache exactly the way a source edit marks a child stale —
+  # no new staleness machinery.
+  invalidate_on: [model, body_hash]
+  # Intended uses, in the order they are expected to earn their cost:
+  #   1. similarity search — find related work without having settled a label scheme
+  #   2. graded staleness — HR-009 is currently binary (`pinned_hash != parent hash`),
+  #      so a typo fix blocks a turn as hard as a rewrite. A distance threshold would
+  #      separate the two. The threshold can only be calibrated on real data.

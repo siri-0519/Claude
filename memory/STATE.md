@@ -4,19 +4,19 @@
 > 자세한 내용은 `ops/bin/ops ctx log`로. 여기엔 "새 세션이 10초 안에 알아야 할 것"만.
 
 <!-- BEGIN GENERATED: auto -->
-**vault 1 artifacts · 0 edges · 0 stale**
+**vault 2 artifacts · 0 edges · 0 stale**
 
 **이전 세션이 남긴 인계**
 - 배선도 아티팩트 발행됨 · vault 편입 여부 미결 — 세션 흐름/정보갱신 배선도를 아티팩트로 발행: https://claude.ai/code/artifact/406b41d4-c46f-468a-a9d1-1d06497a596d
 - 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기 — ops/rules/soft.md의 SR-001~005는 시드값입니다. vault/는 아직 비어 있고 ADR 1건뿐.
 
 **최근 로그**
+- `2026-09-04` decision: 콘텐츠 벡터: 자리만 확정, 활성화는 코퍼스 이후
 - `2026-09-04` note: SessionStart 훅 실세션 검증 완료
 - `2026-09-04` work: 작업 구조 검증 — 결함 3건 실증, 분류 체계 이중화 확인
 - `2026-09-04` note: SessionStart 훅은 아직 실제 세션에서 검증 안 됨
 - `2026-09-04` handoff: 배선도 아티팩트 발행됨 · vault 편입 여부 미결
 - `2026-09-04` handoff: 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기
-- `2026-09-04` note: 훅을 직접 써보며 결함 2개 수정
 
 더 보려면: `ops/bin/ops ctx log -n 30` / `ops/bin/ops ctx log --grep 키워드`
 <!-- END GENERATED: auto -->
