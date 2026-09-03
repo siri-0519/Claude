@@ -20,8 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import core  # noqa: E402
 
 
-def _csv(v: str | None) -> list[str]:
-    return [x.strip() for x in (v or "").split(",") if x.strip()]
+def _csv(v: str | list[str] | None) -> list[str]:
+    """`--x a,b`, `--x a --x b`, and both mixed. A repeated flag used to
+    overwrite silently, which lost provenance edges without a word."""
+    items = v if isinstance(v, list) else [v]
+    return [x.strip() for s in items for x in (s or "").split(",") if x.strip()]
 
 
 # ------------------------------------------------------------------ ctx ----
@@ -121,10 +124,13 @@ def cmd_new(a) -> int:
         meta["derives_from"] = _pin(parents)
     body = a.body if a.body is not None else f"\n# {a.title}\n\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    if core.is_texty(path):
+    if core.takes_frontmatter(path):
         path.write_text(core.join_frontmatter(meta, body), encoding="utf-8")
     else:
-        path.touch()
+        if a.body is not None:            # don't inject a default header into source
+            path.write_text(a.body, encoding="utf-8")
+        else:
+            path.touch()
         core.sidecar_for(path).write_text(
             __import__("yaml").safe_dump(meta, sort_keys=False, allow_unicode=True))
     print(f"created {core.rel(path)}  id={meta['id']}")
@@ -155,7 +161,7 @@ def cmd_ingest(a) -> int:
                     "labels": _csv(a.label) or ["unsorted"],
                     "summary": "", "status": "draft",
                     "created": core.today(), "updated": core.today()}
-            if core.is_texty(p):
+            if core.takes_frontmatter(p):
                 text = p.read_text(encoding="utf-8", errors="replace")
                 p.write_text(core.join_frontmatter(meta, text), encoding="utf-8")
             else:
@@ -270,14 +276,15 @@ def main() -> int:
     p = sub.add_parser("new", help="create an artifact with metadata + provenance")
     p.add_argument("kind"); p.add_argument("path")
     p.add_argument("--title", required=True)
-    p.add_argument("--label"); p.add_argument("--summary")
-    p.add_argument("--source", help="comma-separated ids this is DERIVED FROM")
+    p.add_argument("--label", action="append"); p.add_argument("--summary")
+    p.add_argument("--source", action="append",
+                   help="ids this is DERIVED FROM; repeat the flag or comma-separate")
     p.add_argument("--body"); p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_new)
 
     p = sub.add_parser("ingest", help="label existing files that have no metadata")
     p.add_argument("paths", nargs="*")
-    p.add_argument("--label"); p.add_argument("--kind")
+    p.add_argument("--label", action="append"); p.add_argument("--kind")
     p.set_defaults(fn=cmd_ingest)
 
     p = sub.add_parser("link", help="derivation graph")
@@ -290,7 +297,8 @@ def main() -> int:
     p.add_argument("op", choices=["add", "list"])
     p.add_argument("--kind", default="work", choices=list(core.LOG_KINDS))
     p.add_argument("--title", default=""); p.add_argument("--body")
-    p.add_argument("--ref"); p.add_argument("--label")
+    p.add_argument("--ref", action="append")
+    p.add_argument("--label", action="append")
     p.add_argument("-n", type=int, default=15)
     p.set_defaults(fn=cmd_log)
 

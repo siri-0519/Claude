@@ -32,7 +32,8 @@ rules:
       command_regex: '(?x) rm \s+ (?:-\w*\s+)* -\w*[rR]\w* [^\n;&|]* (?: \s / (?:\s|$) | ~ | \.git\b | \bops/ | \bmemory/ | \b\.claude/ | \bvault/ )'
     message: |
       Refusing to recursively delete repo machinery or a root/home path.
-      Delete specific files by name, or ask the user first.
+      Delete specific files by name. Genuinely need the recursive form? Ask the
+      user, then re-run with OPS_ALLOW=HR-002 prefixed.
     escape: OPS_ALLOW
 
   - id: HR-003
@@ -46,7 +47,7 @@ rules:
       run `ops/bin/ops build`. `ops/bin/ops link why <id>` tells you what the source is.
 
   - id: HR-004
-    stage: pre_tool
+    stage: [pre_tool, stop]
     action: deny
     title: "No secrets into the working tree"
     check: check_secret_write
@@ -54,6 +55,10 @@ rules:
       This content looks like a credential (private key, token, or a .env body).
       Secrets do not belong in this repo. Put it in the environment instead and
       reference it by variable name.
+      Checked twice: pre_tool reads what a call is about to write, and stop reads
+      what is actually on disk — so a write PreToolUse could not see in the command
+      string (an interpreter writing the file directly) is still caught before the
+      turn ends. Delete the value; a `deny` here does not go away by retrying.
 
   - id: HR-005
     stage: [pre_tool, stop]
@@ -73,7 +78,11 @@ rules:
     message: |
       Files under vault/ must declare id/kind/title so they are indexable and
       linkable. Use `ops/bin/ops new <kind> <path> --title ... --label ...` which writes a
-      correct header for you. Binary/unstructured files get a `.meta.yml` sidecar.
+      correct header for you. Source code and binaries get a `.meta.yml` sidecar,
+      because a `---` fence would corrupt them.
+      Dropping something in raw? vault/inbox accepts an unlabelled file so there is
+      something for `ops/bin/ops ingest` to pick up — but the turn will not END until
+      you have run it.
 
   - id: HR-007
     stage: pre_tool

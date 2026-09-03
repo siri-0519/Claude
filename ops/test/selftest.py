@@ -39,6 +39,7 @@ PASSED = 0
 RM_RF = "rm -" + "rf ops/"
 PRIVKEY = "-----BEGIN RSA PRIVATE " + "KEY-----"
 CRED = 'api_key = "' + "sk9d8f7a6s5d4f3g2h1j0k" + '"'
+AWSKEY = "AKIA" + "QRSTUVWXYZ234567"
 
 
 def ok(name: str, cond: bool, detail: str = "") -> None:
@@ -154,6 +155,32 @@ ok("HR-004 exempts the files that DEFINE the patterns",
    "HR-004" not in denied("pre_tool", tctx("Write",
                                            file_path=str(TMP / "ops/test/x.py"),
                                            content=PRIVKEY)))
+
+# PreToolUse only sees writes it can spot in a command string, so it cannot see
+# `python3 -c "open(...).write(...)"`. Every other content rule is re-checked at
+# stop against what is on disk; HR-004 used to be the one that was not.
+leak = TMP / "vault/inbox/leak.txt"
+leak.write_text("token: " + AWSKEY + "\n", encoding="utf-8")
+ok("HR-004 catches a secret PreToolUse never saw", "HR-004" in denied("stop", STOPCTX))
+leak.unlink()
+ok("HR-004 clears once the value is gone", "HR-004" not in denied("stop", STOPCTX))
+exempt = TMP / "ops/rules/notes.md"
+exempt.write_text(PRIVKEY + "\n", encoding="utf-8")
+ok("the stop-stage scan honours content_scan_exempt too",
+   "HR-004" not in denied("stop", STOPCTX))
+exempt.unlink()
+
+# A rule whose check function was renamed away used to disappear without a word.
+core.hard_rules()                                   # prime the cache, then plant one
+_broken = {"id": "HR-GONE", "stage": "pre_tool", "action": "deny",
+           "title": "rule whose check was renamed away",
+           "check": "check_this_name_does_not_exist", "message": "x"}
+core._rules_cache = core._rules_cache + [_broken]
+ok("a missing check warns instead of vanishing",
+   "HR-GONE" in warned("pre_tool", tctx("Bash", command="echo hi")))
+ok("a missing check does not pose as an enforced deny",
+   "HR-GONE" not in denied("pre_tool", tctx("Bash", command="echo hi")))
+core._rules_cache = [r for r in core._rules_cache if r["id"] != "HR-GONE"]
 ok("HR-005 blocks blowing the STATE budget",
    "HR-005" in denied("pre_tool", tctx("Write", file_path=str(TMP / "memory/STATE.md"),
                                        content="x" * (core.limits()["state_md_bytes"] + 10))))

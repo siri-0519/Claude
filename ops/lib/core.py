@@ -115,8 +115,26 @@ def rel(p: Path | str) -> str:
 FM_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 
 
+# Prose formats only. A `---` fence at the top of a .py/.js/.sh file is a
+# syntax error, so those carry their metadata in a `.meta.yml` sidecar instead.
+FRONTMATTER_SUFFIXES = {".md", ".txt"}
+
+
 def is_texty(path: Path) -> bool:
+    """Readable as text. Says nothing about where metadata goes."""
     return path.suffix.lower() in TEXT_SUFFIXES
+
+
+def takes_frontmatter(path: Path) -> bool:
+    """Can carry inline YAML front-matter without becoming invalid."""
+    return path.suffix.lower() in FRONTMATTER_SUFFIXES
+
+
+def drop_zone() -> str:
+    """The one place under vault/ where an unlabelled file may land, so that
+    `ops ingest` has something to pick up. HR-006 still refuses to let the turn
+    END while anything there is unlabelled."""
+    return kinds().get("raw", {}).get("home", "vault/inbox")
 
 
 def sidecar_for(path: Path) -> Path:
@@ -146,7 +164,7 @@ def read_meta(path: Path) -> tuple[dict, str | None]:
     """(metadata, body-or-None). Binary/unstructured files use a sidecar."""
     if not path.exists():
         return {}, None
-    if is_texty(path):
+    if takes_frontmatter(path):
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -364,7 +382,7 @@ def repin(child_id: str, parent_ids: list[str] | None = None) -> list[str]:
 
 def write_meta(path: Path, meta: dict) -> None:
     """Persist metadata, leaving the body byte-identical."""
-    if is_texty(path) and path.exists():
+    if takes_frontmatter(path) and path.exists():
         text = path.read_text(encoding="utf-8")
         _, body = split_frontmatter(text)
         if FM_RE.match(text):
@@ -714,7 +732,11 @@ def evaluate(stage: str, ctx: dict) -> list[Verdict]:
             detail = ""
         if rule.get("check"):
             fn = globals().get(rule["check"])
-            if fn is None:
+            if fn is None:                                 # loud: enforcement is OFF
+                out.append(Verdict(rule["id"], "warn", rule["title"],
+                                   f"check `{rule['check']}` does not exist in "
+                                   f"ops/lib/core.py — this rule is NOT enforced. "
+                                   f"A typo in the name silently removes a rule."))
                 continue
             try:
                 detail = fn(ctx)
@@ -748,20 +770,17 @@ def strip_heredocs(command: str) -> str:
     return HEREDOC_RE.sub("<<HEREDOC_BODY_ELIDED", command or "")
 
 
+def _path_content_scan_exempt(r: str) -> bool:
+    """Describing a rule is not violating it: the rule files, the schema, the
+    engine that defines the patterns, and their tests may contain them."""
+    return any(fnmatch.fnmatch(r, pat)
+               or (pat.endswith("/**") and r.startswith(pat[:-3] + "/"))
+               for pat in schema().get("content_scan_exempt", []))
+
+
 def _exempt_from_content_scan(ctx: dict) -> bool:
-    """Describing a rule is not violating it: the rule files and their tests
-    are allowed to contain the very patterns they define."""
-    pats = schema().get("content_scan_exempt", [])
     targets = _target_paths(ctx)
-    if not targets:
-        return False
-    for p in targets:
-        r = rel(p)
-        if not any(fnmatch.fnmatch(r, pat)
-                   or (pat.endswith("/**") and r.startswith(pat[:-3] + "/"))
-                   for pat in pats):
-            return False
-    return True
+    return bool(targets) and all(_path_content_scan_exempt(rel(p)) for p in targets)
 REDIRECT_RE = re.compile(r"(?:>>?|\btee\b(?:\s+-\w+)*)\s+([\w./~$-]+)")
 SEDI_RE = re.compile(r"\bsed\b[^|;&\n]*\s-\w*i\w*\b[^|;&\n]*?\s([\w./-]+)\s*$", re.M)
 
@@ -841,7 +860,66 @@ SECRET_PATTERNS = [
 PLACEHOLDER_RE = re.compile(r"(?i)x{3,}|your[_-]|example|placeholder|dummy|redacted|<[^>]+>|\.\.\.")
 
 
+SECRET_SCAN_MAX_BYTES = 512_000
+
+
+def _changed_files() -> list[Path]:
+    """Files this session touched, per git — the same source HR-011 uses.
+
+    Renames and non-ASCII quoting make the plain porcelain format fiddly, so
+    read the NUL-separated form and keep whichever reading names a real file.
+    """
+    out, seen = [], set()
+    for chunk in _git("status", "--porcelain", "-z", "-uall").split("\0"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        for cand in {chunk, chunk[3:].strip()}:
+            if not cand or cand in seen or cand.startswith(".meta/"):
+                continue
+            seen.add(cand)
+            p = ROOT / cand
+            if p.is_file():
+                out.append(p)
+    return out
+
+
+def _scan_files_for_secrets(paths: list[Path]) -> list[str]:
+    """Read the result, not the action.
+
+    PreToolUse only sees writes it can spot in a command string, so an
+    interpreter write (`python3 -c "open(...).write(...)"`) slips past it.
+    Every other content rule is re-checked at `stop` against what is actually
+    on disk; this is that second pass for secrets.
+    """
+    hits = []
+    for p in paths:
+        r = rel(p)
+        if _path_content_scan_exempt(r) or any(part in SKIP_DIRS for part in p.parts):
+            continue
+        try:
+            if p.stat().st_size > SECRET_SCAN_MAX_BYTES:
+                continue
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue                                   # binary or unreadable
+        for pat, label in SECRET_PATTERNS:
+            for m in re.finditer(pat, text):
+                if PLACEHOLDER_RE.search(m.group(0)):
+                    continue
+                hits.append(f"{r} — {label}")
+                break                                  # one report per pattern per file
+    return list(dict.fromkeys(hits))
+
+
 def check_secret_write(ctx: dict) -> str | None:
+    if ctx.get("stage") == "stop" or not ctx.get("tool_name"):
+        hits = _scan_files_for_secrets(_changed_files())
+        if not hits:
+            return None
+        return ("Credentials sitting in the working tree:\n  - "
+                + "\n  - ".join(hits[:12])
+                + (f"\n  ({len(hits)} total)" if len(hits) > 12 else ""))
     if _exempt_from_content_scan(ctx):
         return None
     text = _written_text(ctx)
@@ -911,8 +989,10 @@ def check_frontmatter_on_create(ctx: dict) -> str | None:
     for p in _target_paths(ctx):
         if p.is_file() or not _needs_frontmatter(p) or sidecar_for(p).is_file():
             continue
+        if rel(p).startswith(drop_zone() + "/"):
+            continue          # drop zone: land it now, `ops ingest` before the turn ends
         text = _written_text(ctx)
-        if is_texty(p) and split_frontmatter(text)[0].get("id"):
+        if takes_frontmatter(p) and split_frontmatter(text)[0].get("id"):
             continue
         return f"New artifact without metadata: {rel(p)}"
     return None
