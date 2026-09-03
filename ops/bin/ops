@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""ops — the only tool you need in this repo.
+
+  ops ctx [card|log]      what happened / where things stand
+  ops find                locate artifacts without reading them
+  ops new / ingest        add data WITH its label and provenance
+  ops link                the derivation graph: why / impact / check / ack
+  ops log                 append to the machine log (digest regenerates itself)
+  ops build               regenerate every derived file
+  ops check               run every mechanical rule right now
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import core  # noqa: E402
+
+
+def _csv(v: str | None) -> list[str]:
+    return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
+# ------------------------------------------------------------------ ctx ----
+
+def cmd_ctx(a) -> int:
+    if a.what == "card":
+        print(core.session_card("manual"))
+        return 0
+    entries = core.log_read(months=a.months)
+    if a.kind:
+        entries = [e for e in entries if e.get("kind") in _csv(a.kind)]
+    if a.grep:
+        g = a.grep.lower()
+        entries = [e for e in entries
+                   if g in json.dumps(e, ensure_ascii=False).lower()]
+    if a.ref:
+        entries = [e for e in entries if any(a.ref in r for r in e.get("refs", []))]
+    entries = entries[-a.n:]
+    if a.json:
+        print(json.dumps(entries, ensure_ascii=False, indent=2))
+        return 0
+    if not entries:
+        print("(해당 로그 없음)")
+        return 0
+    for e in entries:
+        print(f"{e['ts'][:16]}  {e['kind']:<8} {e['title']}")
+        if e.get("body"):
+            for ln in e["body"].splitlines():
+                print(f"                          {ln}")
+        if e.get("refs"):
+            print("                          ↳ " + ", ".join(e["refs"]))
+    return 0
+
+
+# ----------------------------------------------------------------- find ----
+
+def cmd_find(a) -> int:
+    want_labels, hits = set(_csv(a.label)), []
+    for art in core.iter_artifacts():
+        if a.kind and art.kind not in _csv(a.kind):
+            continue
+        if want_labels and not want_labels.issubset(set(art.labels)):
+            continue
+        if a.id and a.id not in art.id:
+            continue
+        if a.text:
+            hay = " ".join([art.title, str(art.meta.get("summary", "")),
+                            art.body or ""]).lower()
+            if a.text.lower() not in hay:
+                continue
+        hits.append(art)
+    if a.json:
+        print(json.dumps([{"id": h.id, "path": core.rel(h.path), "kind": h.kind,
+                           "labels": h.labels, "title": h.title} for h in hits],
+                         ensure_ascii=False, indent=2))
+        return 0
+    for h in hits:
+        print(f"{h.id:<20} {h.kind:<10} {core.rel(h.path):<44} "
+              f"[{','.join(h.labels)}] {h.title}")
+    print(f"— {len(hits)} hit(s)", file=sys.stderr)
+    return 0
+
+
+# ------------------------------------------------------------------ new ----
+
+def _pin(parent_ids: list[str]) -> list[dict]:
+    arts = core.artifact_map()
+    out = []
+    for pid in parent_ids:
+        if pid not in arts:
+            raise SystemExit(f"error: unknown source id '{pid}' "
+                             f"(try: ops find --id {pid})")
+        out.append({"id": pid, "hash": arts[pid].hash})
+    return out
+
+
+def cmd_new(a) -> int:
+    if a.kind not in core.kinds():
+        raise SystemExit(f"error: kind must be one of {list(core.kinds())}")
+    path = Path(a.path)
+    if not path.is_absolute():
+        path = core.ROOT / path
+    if path.exists() and not a.force:
+        raise SystemExit(f"error: {core.rel(path)} exists (use --force to re-header)")
+    meta = {
+        "id": core.new_id(a.kind, a.title),
+        "kind": a.kind,
+        "title": a.title,
+        "labels": _csv(a.label),
+        "summary": (a.summary or "")[:core.limits()["summary_chars"]],
+        "status": "active",
+        "created": core.today(),
+        "updated": core.today(),
+    }
+    parents = _csv(a.source)
+    if parents:
+        meta["derives_from"] = _pin(parents)
+    body = a.body if a.body is not None else f"\n# {a.title}\n\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if core.is_texty(path):
+        path.write_text(core.join_frontmatter(meta, body), encoding="utf-8")
+    else:
+        path.touch()
+        core.sidecar_for(path).write_text(
+            __import__("yaml").safe_dump(meta, sort_keys=False, allow_unicode=True))
+    print(f"created {core.rel(path)}  id={meta['id']}")
+    core.build()
+    return 0
+
+
+def cmd_ingest(a) -> int:
+    """Give metadata to everything under vault/ that has none. Unblocks HR-006."""
+    targets = [Path(p) for p in a.paths] or [core.ROOT / r for r in core.ARTIFACT_ROOTS]
+    kind_by_dir = {v["home"]: k for k, v in core.kinds().items()}
+    made = 0
+    for t in targets:
+        t = t if t.is_absolute() else core.ROOT / t
+        files = [t] if t.is_file() else sorted(p for p in t.rglob("*") if p.is_file())
+        for p in files:
+            if not core._needs_frontmatter(p):
+                continue
+            if any(part in core.SKIP_DIRS for part in p.parts):
+                continue
+            if core.read_meta(p)[0].get("id"):
+                continue
+            r = core.rel(p)
+            kind = a.kind or next((k for d, k in kind_by_dir.items()
+                                   if r.startswith(d + "/")), "raw")
+            meta = {"id": core.new_id(kind, r), "kind": kind,
+                    "title": p.stem.replace("-", " ").replace("_", " "),
+                    "labels": _csv(a.label) or ["unsorted"],
+                    "summary": "", "status": "draft",
+                    "created": core.today(), "updated": core.today()}
+            if core.is_texty(p):
+                text = p.read_text(encoding="utf-8", errors="replace")
+                p.write_text(core.join_frontmatter(meta, text), encoding="utf-8")
+            else:
+                core.write_meta(p, meta)
+            print(f"labelled {r}  id={meta['id']}  kind={kind}")
+            made += 1
+    print(f"— {made} file(s) labelled", file=sys.stderr)
+    if made:
+        core.build()
+    return 0
+
+
+# ----------------------------------------------------------------- link ----
+
+def cmd_link(a) -> int:
+    g = core.build_graph()
+    if a.op == "build":
+        core.META.mkdir(exist_ok=True)
+        (core.META / "graph.json").write_text(
+            json.dumps(g, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"graph: {len(g['nodes'])} nodes, {len(g['edges'])} edges "
+              f"-> {core.rel(core.META / 'graph.json')}")
+        return 0
+
+    if a.op == "check":
+        stale = core.check_stale(g)
+        for s in stale:
+            print(f"STALE  {s.child_path:<44} ← {s.parent_path:<44} [{s.reason}]")
+        print(f"— {len(stale)} stale of {len(g['edges'])} edges", file=sys.stderr)
+        return 1 if stale else 0
+
+    if a.op in ("why", "impact"):
+        target = a.target
+        if target not in g["nodes"]:
+            target = core.id_for_path(target) or target
+        if target not in g["nodes"]:
+            raise SystemExit(f"error: no artifact for '{a.target}'")
+        ids = (core.ancestors(target, g) if a.op == "why"
+               else core.descendants(target, g))
+        head = "출처(ancestors)" if a.op == "why" else "영향받는 것(descendants)"
+        print(f"{target}  {g['nodes'][target]['title']}\n{head}:")
+        for i in ids:
+            n = g["nodes"].get(i, {})
+            print(f"  {i:<20} {n.get('path','?'):<44} {n.get('title','')}")
+        if not ids:
+            print("  (없음)")
+        return 0
+
+    if a.op == "ack":
+        changed = core.repin(a.target, _csv(a.source) or None)
+        print(f"repinned {a.target}: " + (", ".join(changed) or "(nothing to do)"))
+        core.build()
+        return 0
+    return 2
+
+
+# ------------------------------------------------------------------ log ----
+
+def cmd_log(a) -> int:
+    if a.op == "add":
+        e = core.log_add(a.kind, a.title, a.body or "", _csv(a.ref), _csv(a.label))
+        print(f"logged [{e['kind']}] {e['title']}")
+        core.build()                       # digest + STATE auto block follow
+        return 0
+    return cmd_ctx(argparse.Namespace(what="log", n=a.n, months=3, kind=None,
+                                      grep=None, ref=None, json=False))
+
+
+# ---------------------------------------------------------- build/check ----
+
+def cmd_build(a) -> int:
+    changed = core.build(write=not a.dry_run)
+    for c in changed:
+        print(("would update " if a.dry_run else "updated ") + c)
+    if not changed:
+        print("everything already current")
+    return 1 if (a.dry_run and changed) else 0
+
+
+def cmd_check(a) -> int:
+    ctx = {"stage": "stop", "tool_name": None, "tool_input": {}, "cwd": str(core.ROOT)}
+    bad = 0
+    for stage in ("stop",):
+        for v in core.evaluate(stage, ctx):
+            bad += v.action == "deny"
+            print(f"[{v.action.upper()}] {v.rule_id} {v.title}\n{v.detail}\n")
+    print("OK — every mechanical rule passes" if not bad
+          else f"{bad} blocking problem(s)", file=sys.stderr)
+    return 1 if bad else 0
+
+
+# ----------------------------------------------------------------- main ----
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="ops", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("ctx", help="session card / log query")
+    p.add_argument("what", nargs="?", default="log", choices=["card", "log"])
+    p.add_argument("-n", type=int, default=15)
+    p.add_argument("--months", type=int, default=3)
+    p.add_argument("--kind"); p.add_argument("--grep"); p.add_argument("--ref")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_ctx)
+
+    p = sub.add_parser("find", help="locate artifacts by label/kind/text")
+    p.add_argument("--label"); p.add_argument("--kind"); p.add_argument("--text")
+    p.add_argument("--id"); p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_find)
+
+    p = sub.add_parser("new", help="create an artifact with metadata + provenance")
+    p.add_argument("kind"); p.add_argument("path")
+    p.add_argument("--title", required=True)
+    p.add_argument("--label"); p.add_argument("--summary")
+    p.add_argument("--source", help="comma-separated ids this is DERIVED FROM")
+    p.add_argument("--body"); p.add_argument("--force", action="store_true")
+    p.set_defaults(fn=cmd_new)
+
+    p = sub.add_parser("ingest", help="label existing files that have no metadata")
+    p.add_argument("paths", nargs="*")
+    p.add_argument("--label"); p.add_argument("--kind")
+    p.set_defaults(fn=cmd_ingest)
+
+    p = sub.add_parser("link", help="derivation graph")
+    p.add_argument("op", choices=["build", "check", "why", "impact", "ack"])
+    p.add_argument("target", nargs="?")
+    p.add_argument("--source")
+    p.set_defaults(fn=cmd_link)
+
+    p = sub.add_parser("log", help="append to / read the machine log")
+    p.add_argument("op", choices=["add", "list"])
+    p.add_argument("--kind", default="work", choices=list(core.LOG_KINDS))
+    p.add_argument("--title", default=""); p.add_argument("--body")
+    p.add_argument("--ref"); p.add_argument("--label")
+    p.add_argument("-n", type=int, default=15)
+    p.set_defaults(fn=cmd_log)
+
+    p = sub.add_parser("build", help="regenerate every derived file")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_build)
+
+    p = sub.add_parser("check", help="run every mechanical rule now")
+    p.set_defaults(fn=cmd_check)
+
+    a = ap.parse_args()
+    if a.cmd == "log" and a.op == "add" and not a.title:
+        ap.error("log add needs --title")
+    if a.cmd == "link" and a.op in ("why", "impact", "ack") and not a.target:
+        ap.error(f"link {a.op} needs a target (id or path)")
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

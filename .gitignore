@@ -1,0 +1,5 @@
+# derived cache — rebuilt by `ops/bin/ops build` / `ops/bin/ops link build`
+.meta/
+__pycache__/
+*.pyc
+.DS_Store

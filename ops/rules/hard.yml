@@ -1,0 +1,122 @@
+# HARD RULES — mechanically enforced. This file is the ONLY source of truth.
+# The rule list inside CLAUDE.md is GENERATED from here (`ops/bin/ops build`), so the rules
+# Claude reads and the rules the hooks enforce can never drift apart.
+#
+# stage:   pre_tool | post_tool | stop
+# action:  deny  (blocks the call / blocks the turn ending)
+#          warn  (injects a note to Claude, does not block)
+# match:   declarative regex matching, evaluated by core.py
+# check:   name of a python predicate in ops/lib/core.py (for logic regex can't express)
+version: 1
+rules:
+
+  - id: HR-001
+    stage: pre_tool
+    action: deny
+    title: "No history rewriting or force-push"
+    match:
+      tool: [Bash]
+      command_regex: '(?x) git \s+ (?: push [^\n;&|]* \s -{1,2}f(?:orce)?\b | push [^\n;&|]* --force-with-lease\b | reset \s+ --hard\b | commit [^\n;&|]* --amend\b | rebase\b | filter-branch\b )'
+    message: |
+      History rewriting is blocked. Other people's checkouts and every link in
+      .meta/graph.json are pinned to commit content. Use a normal merge + commit.
+      Genuinely need it? Ask the user, then re-run with OPS_ALLOW=HR-001 prefixed.
+    escape: OPS_ALLOW
+
+  - id: HR-002
+    stage: pre_tool
+    action: deny
+    title: "No recursive delete of the repo's own machinery"
+    match:
+      tool: [Bash]
+      command_regex: '(?x) rm \s+ (?:-\w*\s+)* -\w*[rR]\w* [^\n;&|]* (?: \s / (?:\s|$) | ~ | \.git\b | \bops/ | \bmemory/ | \b\.claude/ | \bvault/ )'
+    message: |
+      Refusing to recursively delete repo machinery or a root/home path.
+      Delete specific files by name, or ask the user first.
+    escape: OPS_ALLOW
+
+  - id: HR-003
+    stage: pre_tool
+    action: deny
+    title: "Generated files and generated blocks are not hand-editable"
+    check: check_generated_target
+    message: |
+      This file (or this region of it) is produced by `ops/bin/ops build` from an upstream
+      source. Editing it by hand makes the derivation a lie. Edit the SOURCE, then
+      run `ops/bin/ops build`. `ops/bin/ops link why <id>` tells you what the source is.
+
+  - id: HR-004
+    stage: pre_tool
+    action: deny
+    title: "No secrets into the working tree"
+    check: check_secret_write
+    message: |
+      This content looks like a credential (private key, token, or a .env body).
+      Secrets do not belong in this repo. Put it in the environment instead and
+      reference it by variable name.
+
+  - id: HR-005
+    stage: [pre_tool, stop]
+    action: deny
+    title: "memory/STATE.md stays under its size cap"
+    check: check_state_size
+    message: |
+      STATE.md is the card injected into EVERY session — it is a budget, not a log.
+      Move the detail into a log entry (`ops/bin/ops log add`) and keep STATE.md to what a
+      new session must know in its first ten seconds.
+
+  - id: HR-006
+    stage: [pre_tool, stop]
+    action: deny
+    title: "New vault artifacts must carry front-matter"
+    check: check_frontmatter_on_create
+    message: |
+      Files under vault/ must declare id/kind/title so they are indexable and
+      linkable. Use `ops/bin/ops new <kind> <path> --title ... --label ...` which writes a
+      correct header for you. Binary/unstructured files get a `.meta.yml` sidecar.
+
+  - id: HR-007
+    stage: pre_tool
+    action: warn
+    title: "Don't bulk-read the repo"
+    check: check_bulk_read
+    message: |
+      That reads far more than a question usually needs. Try INDEX.md, then
+      `ops/bin/ops find --label X` / `ops/bin/ops find --kind Y`, then read only the hits — and
+      use `sed -n 'A,Bp'` for ranges inside large files.
+
+  - id: HR-008
+    stage: post_tool
+    action: warn
+    title: "Editing a source makes its descendants stale"
+    check: check_impact_after_edit
+    message: |
+      You just changed something other artifacts were derived from. Update them, or
+      run `ops/bin/ops link ack <id>` if the change genuinely does not affect them.
+
+  - id: HR-009
+    stage: stop
+    action: deny
+    title: "No stale derivations at end of turn"
+    check: check_no_stale
+    message: |
+      Derived artifacts are out of sync with their sources. Update each one, then
+      `ops/bin/ops link ack <id>` — or `ops/bin/ops build` if it is a generated file.
+
+  - id: HR-010
+    stage: stop
+    action: deny
+    title: "Generated files must be current"
+    check: check_generated_current
+    message: |
+      Generated content (INDEX.md, digests, the rule block in CLAUDE.md, STATE.md's
+      auto block) no longer matches its sources. Run `ops/bin/ops build`.
+
+  - id: HR-011
+    stage: stop
+    action: deny
+    title: "A session that changed things must leave a log entry"
+    check: check_session_logged
+    message: |
+      Nothing was written to memory/log this session, but files changed. The next
+      session starts blind without it. Run `ops/bin/ops log add --kind work --title ...`.
