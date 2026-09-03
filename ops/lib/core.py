@@ -115,8 +115,26 @@ def rel(p: Path | str) -> str:
 FM_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 
 
+# Prose formats only. A `---` fence at the top of a .py/.js/.sh file is a
+# syntax error, so those carry their metadata in a `.meta.yml` sidecar instead.
+FRONTMATTER_SUFFIXES = {".md", ".txt"}
+
+
 def is_texty(path: Path) -> bool:
+    """Readable as text. Says nothing about where metadata goes."""
     return path.suffix.lower() in TEXT_SUFFIXES
+
+
+def takes_frontmatter(path: Path) -> bool:
+    """Can carry inline YAML front-matter without becoming invalid."""
+    return path.suffix.lower() in FRONTMATTER_SUFFIXES
+
+
+def drop_zone() -> str:
+    """The one place under vault/ where an unlabelled file may land, so that
+    `ops ingest` has something to pick up. HR-006 still refuses to let the turn
+    END while anything there is unlabelled."""
+    return kinds().get("raw", {}).get("home", "vault/inbox")
 
 
 def sidecar_for(path: Path) -> Path:
@@ -146,7 +164,7 @@ def read_meta(path: Path) -> tuple[dict, str | None]:
     """(metadata, body-or-None). Binary/unstructured files use a sidecar."""
     if not path.exists():
         return {}, None
-    if is_texty(path):
+    if takes_frontmatter(path):
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -364,7 +382,7 @@ def repin(child_id: str, parent_ids: list[str] | None = None) -> list[str]:
 
 def write_meta(path: Path, meta: dict) -> None:
     """Persist metadata, leaving the body byte-identical."""
-    if is_texty(path) and path.exists():
+    if takes_frontmatter(path) and path.exists():
         text = path.read_text(encoding="utf-8")
         _, body = split_frontmatter(text)
         if FM_RE.match(text):
@@ -911,8 +929,10 @@ def check_frontmatter_on_create(ctx: dict) -> str | None:
     for p in _target_paths(ctx):
         if p.is_file() or not _needs_frontmatter(p) or sidecar_for(p).is_file():
             continue
+        if rel(p).startswith(drop_zone() + "/"):
+            continue          # drop zone: land it now, `ops ingest` before the turn ends
         text = _written_text(ctx)
-        if is_texty(p) and split_frontmatter(text)[0].get("id"):
+        if takes_frontmatter(p) and split_frontmatter(text)[0].get("id"):
             continue
         return f"New artifact without metadata: {rel(p)}"
     return None
