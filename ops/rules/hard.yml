@@ -47,7 +47,7 @@ rules:
       run `ops/bin/ops build`. `ops/bin/ops link why <id>` tells you what the source is.
 
   - id: HR-004
-    stage: pre_tool
+    stage: [pre_tool, stop]
     action: deny
     title: "No secrets into the working tree"
     check: check_secret_write
@@ -55,6 +55,10 @@ rules:
       This content looks like a credential (private key, token, or a .env body).
       Secrets do not belong in this repo. Put it in the environment instead and
       reference it by variable name.
+      Checked twice: pre_tool reads what a call is about to write, and stop reads
+      what is actually on disk — so a write PreToolUse could not see in the command
+      string (an interpreter writing the file directly) is still caught before the
+      turn ends. Delete the value; a `deny` here does not go away by retrying.
 
   - id: HR-005
     stage: [pre_tool, stop]

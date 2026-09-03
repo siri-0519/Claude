@@ -131,7 +131,9 @@ def stop(core, p: dict) -> None:
     except (OSError, json.JSONDecodeError):
         counts = {}
 
-    denies, _ = split(core.evaluate("stop", make_ctx(p, "stop")))
+    denies, warns = split(core.evaluate("stop", make_ctx(p, "stop")))
+    for v in warns:            # a stop-stage warn reaches no one otherwise
+        print(f"[ops] {v.render()}", file=sys.stderr)
     if not denies:
         counts.pop(sid, None)
         _save(guard, counts)

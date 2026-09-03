@@ -67,7 +67,7 @@ ops log add --kind handoff  --title "다음 세션이 먼저 볼 것"
 | `HR-001` | pre_tool | **deny** | No history rewriting or force-push |
 | `HR-002` | pre_tool | **deny** | No recursive delete of the repo's own machinery |
 | `HR-003` | pre_tool | **deny** | Generated files and generated blocks are not hand-editable |
-| `HR-004` | pre_tool | **deny** | No secrets into the working tree |
+| `HR-004` | pre_tool+stop | **deny** | No secrets into the working tree |
 | `HR-005` | pre_tool+stop | **deny** | memory/STATE.md stays under its size cap |
 | `HR-006` | pre_tool+stop | **deny** | New vault artifacts must carry front-matter |
 | `HR-007` | pre_tool | **warn** | Don't bulk-read the repo |

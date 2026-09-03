@@ -4,7 +4,7 @@
 > This is the map: find what you need here, then open only that file.
 > Narrower queries: `ops/bin/ops find --label X --kind Y --text Z`.
 
-**2 artifacts · 0 derivation edges**
+**3 artifacts · 0 derivation edges**
 
 ## code (0) — Source code and scripts that are the product, not the tooling.
 
@@ -26,9 +26,10 @@ _(none)_
 
 _(none)_
 
-## decision (2) — An ADR. Why a choice was made, and what it binds.
+## decision (3) — An ADR. Why a choice was made, and what it binds.
 
-| id                | path                                          | labels                     | summary                                                          | derives_from |
-|-------------------|-----------------------------------------------|----------------------------|------------------------------------------------------------------|--------------|
-| A-20260904-023000 | memory/decisions/ADR-0001-work-environment.md | setup,architecture         | 규칙·문맥·토큰·파생연계를 문서가 아닌 실행 가능한 장치로 구현한 근거와 트레이드오프                  | —            |
-| A-20260904-fd78c1 | memory/decisions/ADR-0002-content-vectors.md  | architecture,vector,schema | 손으로 매기는 라벨 가중치는 기각, 본문 파생 임베딩은 .meta/ 캐시에 자리만 확정하고 코퍼스가 쌓인 뒤 활성화 | —            |
+| id                | path                                          | labels                       | summary                                                                | derives_from |
+|-------------------|-----------------------------------------------|------------------------------|------------------------------------------------------------------------|--------------|
+| A-20260904-023000 | memory/decisions/ADR-0001-work-environment.md | setup,architecture           | 규칙·문맥·토큰·파생연계를 문서가 아닌 실행 가능한 장치로 구현한 근거와 트레이드오프                        | —            |
+| A-20260904-fd78c1 | memory/decisions/ADR-0002-content-vectors.md  | architecture,vector,schema   | 손으로 매기는 라벨 가중치는 기각, 본문 파생 임베딩은 .meta/ 캐시에 자리만 확정하고 코퍼스가 쌓인 뒤 활성화       | —            |
+| A-20260904-01f081 | memory/decisions/ADR-0003-kind-and-labels.md  | architecture,taxonomy,labels | kind 축소안을 기각하고 6종 유지. 배타성 문제는 다중 라벨로 해소하되, 디렉터리와 kind의 이중 진실원은 미해결로 남음 | —            |
