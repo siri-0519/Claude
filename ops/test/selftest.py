@@ -239,6 +239,71 @@ for _ in range(4):
 ok("Stop gives up after the cap, so a session can never be trapped",
    d.get("decision") != "block", str(d)[:140])
 
+# ---------------------------------------------------------------------------
+print("\n[router] hooks survive a session opened above the repos")
+# 레포 위에서 세션이 열리면 어느 레포의 .claude/settings.json 도 안 읽힌다 (2026-09-04).
+# 위 디렉터리에 설정 하나를 걸고, 훅마다 guard 로 감싸 상관있는 레포만 돌린다.
+
+sys.path.insert(0, str(REAL / "ops/lib"))
+import hooks as _hooks
+
+_W = Path(tempfile.mkdtemp(prefix="router-"))
+_A, _B = _W / "alpha", _W / "beta"
+for _r in (_A, _B):
+    (_r / ".claude/hooks").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(_r)], check=True)
+    (_r / ".claude/settings.json").write_text(json.dumps({"hooks": {
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+            "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/probe.sh pre_tool_use'}]}],
+        "Stop": [{"hooks": [{"type": "command",
+            "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/probe.sh stop'}]}],
+    }}), encoding="utf-8")
+    _p = _r / ".claude/hooks/probe.sh"
+    _p.write_text('#!/bin/sh\necho "돌았다 $CLAUDE_PROJECT_DIR"\n', encoding="utf-8")
+    _p.chmod(0o755)
+
+def _pay(**kw): return json.dumps(kw)
+
+def _guard(root, stage, payload):
+    return subprocess.run(
+        [sys.executable, str(REAL / "ops/bin/ops"), "guard", str(root), stage,
+         "--", f'{root}/.claude/hooks/probe.sh {stage}'],
+        input=payload, text=True, capture_output=True)
+
+_in_a = _pay(tool_input={"file_path": str(_A / "x.md")}, cwd=str(_W))
+ok("a call inside one repo runs that repo's hook",
+   "돌았다" in _guard(_A, "pre_tool_use", _in_a).stdout)
+ok("the same call stays silent in the other repo",
+   _guard(_B, "pre_tool_use", _in_a).stdout.strip() == "")
+ok("the hook is told which repo it is in",
+   str(_A) in _guard(_A, "pre_tool_use", _in_a).stdout)
+_in_cwd = _pay(tool_input={"command": "git status"}, cwd=str(_B))
+ok("with no path in the call, the cwd decides the repo",
+   "돌았다" in _guard(_B, "pre_tool_use", _in_cwd).stdout
+   and _guard(_A, "pre_tool_use", _in_cwd).stdout.strip() == "")
+ok("a call outside every repo runs nothing",
+   _guard(_A, "pre_tool_use", _pay(tool_input={"command": "echo hi"}, cwd="/tmp")).stdout.strip() == "")
+ok("the end of an answer has no path, so every repo runs",
+   "돌았다" in _guard(_A, "stop", _pay(cwd=str(_W))).stdout
+   and "돌았다" in _guard(_B, "stop", _pay(cwd=str(_W))).stdout)
+
+_gen = _hooks.설정짓기(_W, REAL / "ops/bin/ops")
+_names = [h["command"] for v in _gen["hooks"].values() for g in v for h in g["hooks"]]
+ok("the generated settings register both repos",
+   sum(str(_A) in c for c in _names) >= 2 and sum(str(_B) in c for c in _names) >= 2,
+   f"{len(_names)} entries")
+ok("nothing in the generated settings still says CLAUDE_PROJECT_DIR",
+   not any("CLAUDE_PROJECT_DIR" in c for c in _names))
+_hooks.설치(_W, REAL / "ops/bin/ops")
+ok("installing is what makes the settings file exist",
+   (_W / ".claude/settings.json").is_file())
+_before = (_W / ".claude/settings.json").read_text(encoding="utf-8")
+_hooks.설치(_W, REAL / "ops/bin/ops")
+ok("installing twice changes nothing",
+   (_W / ".claude/settings.json").read_text(encoding="utf-8") == _before)
+shutil.rmtree(_W, ignore_errors=True)
+
+
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:
     print(f"  - {f}")
