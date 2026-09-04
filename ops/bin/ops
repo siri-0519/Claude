@@ -363,14 +363,25 @@ def _hooks():
 
 
 def _hooks_위() -> Path:
-    """레포들이 나란히 있는 위 디렉터리. 이 파일이 있는 레포의 부모다."""
+    """레포들이 나란히 있는 위 디렉터리.
+
+    이 파일이 든 레포의 부모로 짚으면 틀린다 — 이 기계는 레포마다 `.claude-ops/` 로
+    붙어 있어서, 그 레포 자신이 부모로 잡힌다 (2026-09-04에 재어 고쳤다).
+    레포를 실제로 여럿 담고 있는 첫 디렉터리를 찾는다."""
     env = os.environ.get("CLAUDE_HOOKS_ROOT")
     if env:
         return Path(env).resolve()
-    here = Path(__file__).resolve()
-    for d in here.parents:
-        if (d / ".git").exists():
-            return d.parent
+    hooks = _hooks()
+    for d in [Path.cwd().resolve(), *Path.cwd().resolve().parents,
+              *Path(__file__).resolve().parents]:
+        표 = d / hooks.router이름
+        if 표.is_file():
+            try:
+                return Path(json.loads(표.read_text(encoding="utf-8"))["위"]).resolve()
+            except (OSError, ValueError, KeyError):
+                pass
+        if hooks.레포들(d):
+            return d
     return Path.cwd().resolve().parent
 
 

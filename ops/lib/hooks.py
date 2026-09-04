@@ -24,6 +24,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 설정이름 = "settings.json"
@@ -227,14 +228,32 @@ def 상태(위: Path) -> list[tuple[str, bool, str]]:
     설정 = 위 / ".claude" / 설정이름
     자리 = os.environ.get("CLAUDE_PROJECT_DIR") or ""
 
-    걸렸나 = 설정.is_file()
+    # 레포 제 것의 설정을 위 설정으로 오인하지 않는다. 위 설정은 guard 로 감싼 것이다.
+    걸렸나 = 설정.is_file() and " guard " in 설정.read_text(encoding="utf-8")
     나온것.append(("위 디렉터리 설정", 걸렸나,
                  f"{설정} — 레포 {len(rs)}개의 훅을 건다" if 걸렸나
                  else f"{설정} 이 없다. `ops hooks --설치` 로 만든다"))
 
-    맞나 = bool(자리) and Path(자리).resolve() in [위.resolve()] + [r.resolve() for r in rs]
-    나온것.append(("세션의 프로젝트 자리", 맞나,
-                 f"{자리}" if 맞나 else f"{자리 or '안 알려졌다'} — 위 디렉터리도 레포도 아니다"))
+    # 훅이 도는지는 환경변수로 재지 않는다. 그 변수는 훅에만 주어지고 여기서는 늘 비어
+    # 있어서, 훅이 멀쩡히 도는데도 안 돈다고 나왔다 (2026-09-04에 재어 고쳤다).
+    # 실제로 돈 자취인 맥박으로 잰다.
+    최근 = None
+    for r in rs:
+        맥 = r / ".git/claude-hook-heartbeat"
+        if not 맥.is_file():
+            continue
+        try:
+            d = json.loads(맥.read_text(encoding="utf-8"))
+            지남 = (datetime.now() - datetime.fromisoformat(d["때"])).total_seconds() / 60
+        except (OSError, ValueError, KeyError):
+            continue
+        if 최근 is None or 지남 < 최근[0]:
+            최근 = (지남, r.name, d.get("자리", ""))
+    돈다 = 최근 is not None and 최근[0] < 30
+    나온것.append(("훅이 실제로 돌고 있나", 돈다,
+                 f"{최근[1]} 에서 {최근[0]:.0f}분 전에 돌았다 ({최근[2]})" if 돈다
+                 else "맥박이 없다 — 이 세션에서 아직 한 번도 안 돌았다. "
+                      f"세션이 읽는 자리는 {자리 or '안 알려졌다'} 다"))
 
     for r in rs:
         깃 = subprocess.run(["git", "-C", str(r), "rev-parse", "--git-path", "hooks"],
