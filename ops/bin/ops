@@ -8,11 +8,13 @@
   ops log                 append to the machine log (digest regenerates itself)
   ops build               regenerate every derived file
   ops check               run every mechanical rule right now
+  ops origin              누가 냈나 — 항마다 출처를 세고 사람의 판정을 받는다
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -247,6 +249,75 @@ def cmd_check(a) -> int:
     return 1 if bad else 0
 
 
+# ---------------------------------------------------------------- origin ----
+# 누가 냈나 — 이 레포만의 것이 아니다. 다른 레포가 이 저장소를 서브모듈로 붙여서
+# 같은 기계를 쓴다. 그래서 이 명령만은 core 를 쓰지 않고, 부르는 자리에서 위로
+# 올라가며 .origin.yml 을 찾아 그 레포를 뿌리로 삼는다.
+
+def _origin():
+    """필요할 때만 불러온다. 이 모듈이 없어도 나머지 명령은 다 돌아야 한다 —
+    위에서 불렀더니 파일 하나가 없다고 도구 전체가 죽었다 (2026-09-04)."""
+    import origin
+    return origin
+
+
+def _origin_root() -> Path:
+    origin = _origin()
+    env = os.environ.get("ORIGIN_ROOT")
+    if env:
+        return Path(env).resolve()
+    here = Path.cwd().resolve()
+    for d in [here, *here.parents]:
+        if (d / origin.설정파일).is_file():
+            return d
+    raise SystemExit(
+        f"{origin.설정파일} 을 여기서도 위에서도 못 찾았다.\n"
+        f"어느 문서의 항을 셀지 정하는 파일이다. 레포 뿌리에 만든다.")
+
+
+def cmd_origin(a) -> int:
+    origin = _origin()
+    뿌리 = _origin_root()
+    if not a.문서:
+        전체, 안됨, 표 = origin.세기(뿌리)
+        print(f"문서 {len(origin.세는문서(뿌리))}개 · 항 {전체}개 · "
+              f"판정이 없는 항 {안됨}개 ({안됨 * 100 // max(전체, 1)}%)\n")
+        for n, t, f in 표:
+            print(f"  {n:5d}/{t:<6d}  {f}")
+        클로드것 = [x for p in origin.세는문서(뿌리) for x in origin.내가_적은_판정(p)]
+        if 클로드것:
+            print(f"\n  이 가운데 {len(클로드것)}개는 사람이 커밋한 판정이 아니라 "
+                  f"클로드가 적은 것이다.")
+        print("\n한 문서를 판정하려면: ops origin <파일> --검토")
+        return 0
+
+    p = (뿌리 / a.문서).resolve()
+    if not p.is_file():
+        raise SystemExit(f"그런 문서가 없다: {a.문서}")
+    if a.검토:
+        origin.검토문서_만들기(뿌리, p)
+        print(f"{origin.검토문서} 를 만들었다 — {origin.상대(뿌리, p)} 의 항 "
+              f"{len(origin.현황(p))}개다. 적으신 뒤에 커밋해 주셔야 들어온다.")
+        return 0
+    if a.읽는다:
+        바뀐, 튄것, 클로드것 = origin.검토문서_읽기(뿌리, p)
+        print(f"{origin.상대(뿌리, p)} 의 항 {바뀐}개에 사람의 판정을 적었다.")
+        if 클로드것:
+            print(f"  받지 않은 줄 {클로드것}개 — 사람이 커밋한 줄이 아니다.")
+        for t in 튄것:
+            print(f"  못 읽은 줄: {t}")
+        return 0
+    줄목록 = origin.현황(p)
+    셈 = {}
+    for *_x, v in 줄목록:
+        셈[v] = 셈.get(v, 0) + 1
+    print(f"{origin.상대(뿌리, p)} — 항 {len(줄목록)}개  "
+          + " · ".join(f"{k} {v}" for k, v in sorted(셈.items())))
+    for _열쇠, 절, 본문, 값 in 줄목록:
+        print(f"  [{값}] {절}절  {본문[:64]}")
+    return 0
+
+
 # ----------------------------------------------------------------- main ----
 
 def main() -> int:
@@ -300,6 +371,12 @@ def main() -> int:
 
     p = sub.add_parser("check", help="run every mechanical rule now")
     p.set_defaults(fn=cmd_check)
+
+    p = sub.add_parser("origin", help="누가 냈나 — 문서의 항마다 출처를 세고 판정을 받는다")
+    p.add_argument("문서", nargs="?", help="비우면 레포 전체의 현황을 센다")
+    p.add_argument("--검토", action="store_true", help="사람이 채울 문서를 만든다")
+    p.add_argument("--읽는다", action="store_true", help="사람이 채워 커밋한 문서를 읽는다")
+    p.set_defaults(fn=cmd_origin)
 
     a = ap.parse_args()
     if a.cmd == "log" and a.op == "add" and not a.title:

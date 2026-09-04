@@ -11,12 +11,12 @@
 - 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기 — ops/rules/soft.md의 SR-001~005는 시드값입니다. vault/는 아직 비어 있고 ADR 1건뿐.
 
 **최근 로그**
+- `2026-09-04` decision: 누가 냈나 — 레포끼리 나눠 쓰는 기계를 여기에 두었다
 - `2026-09-04` note: SessionStart 훅은 아직 실제 세션에서 검증 안 됨
 - `2026-09-04` handoff: 배선도 아티팩트 발행됨 · vault 편입 여부 미결
 - `2026-09-04` handoff: 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기
 - `2026-09-04` note: 훅을 직접 써보며 결함 2개 수정
 - `2026-09-04` decision: 검사 가능한 규칙은 전부 훅으로, 나머지만 자연어로
-- `2026-09-04` work: 작업 환경 초기 구축
 
 더 보려면: `ops/bin/ops ctx log -n 30` / `ops/bin/ops ctx log --grep 키워드`
 <!-- END GENERATED: auto -->

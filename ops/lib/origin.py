@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""누가 냈나 — 문서의 항마다 그것이 어디서 왔는지를 세고, 판정을 받아 둔다.
+
+왜 있는가 (2026-09-04). 이 계정의 레포 넷에서 같은 사고가 났다. 클로드가 적은 것과
+사람이 정한 것이 같은 문장으로 같은 문서에 앉아 있어서, 다음 세션의 클로드가 전부
+사람의 결정으로 읽고 그 위에 또 쌓는다. `broadcast` 레포의 규칙 파일에는 *제안이 문서
+사이에서 서로 인용되며 확정으로 굳는 사고가 두 번 났다* 고 적혀 있고, `creation`
+레포에서는 떡밥 대장 42행 가운데 22행이 클로드가 넣은 것이었다.
+
+무엇을 하는가.
+  - 문서를 항으로 가른다. 항은 불릿 한 줄 · 표 한 행 · 문단 하나다.
+  - 항마다 누가 냈는지를 사이드카(`<파일>.meta.yml`)의 항출처 칸에 둔다.
+    본문에는 표시를 붙이지 않는다 — 본문은 사람도 클로드도 읽는 것이라, 줄마다 기호가
+    붙으면 읽는 양이 그만큼 늘고 글이 지저분해진다.
+  - 판정은 **사람이 직접 커밋한 줄에서만** 받는다 (git blame). 클로드가 자기에게
+    판정을 줄 수 없게 하기 위해서다.
+  - 판정이 없는 항의 수를 센다. 그 수가 늘면 커밋을 막는 것은 부르는 쪽의 몫이다.
+
+어느 문서를 세는가는 레포마다 다르다. 레포 뿌리의 `.origin.yml` 이 정한다:
+
+    문서:            # 셀 문서. glob 으로 적는다
+      - "story/characters/*.md"
+      - "identity/**/*.md"
+    빼는것:          # 경로에 이 조각이 들어가면 세지 않는다
+      - "/log/"
+    사람메일:        # 판정을 받을 사람의 커밋 메일. 여럿이면 여러 줄
+      - "someone@example.com"
+
+기계는 여기 하나, 대장은 레포마다 — 그것이 이 파일이 따로 있는 이유다.
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+from datetime import date
+from pathlib import Path
+
+import yaml
+
+# 클로드가 커밋할 때 쓰는 메일. 이 메일이 아닌 커밋을 사람의 것으로 본다.
+클로드메일 = "noreply@anthropic.com"
+
+# 값은 넷이다. 한 낱말로 적는다.
+누가냈나 = {
+    "작가": "사람이 확정 · 지시 · 컨셉 · 설정으로 냈다",
+    "채택": "클로드가 낸 것을 사람이 채택하거나 확인했다",
+    "봤다": "사람의 표시는 붙어 있으나 누가 낸 것인지가 안 적혀 있다",
+    "없다": "클로드가 적었고 사람은 아직 안 봤다",
+}
+
+설정파일 = ".origin.yml"
+검토문서 = "ORIGIN-REVIEW.md"
+
+
+# ------------------------------------------------------------ 레포와 설정 ----
+
+def 설정(뿌리: Path) -> dict:
+    p = 뿌리 / 설정파일
+    if not p.is_file():
+        raise SystemExit(
+            f"{설정파일} 이 없다. 어느 문서의 항을 셀지 정해야 한다.\n"
+            f"보기:\n문서:\n  - \"*.md\"\n빼는것:\n  - \"/log/\"\n")
+    d = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    d.setdefault("문서", [])
+    d.setdefault("빼는것", [])
+    d.setdefault("사람메일", [])
+    return d
+
+
+def 세는문서(뿌리: Path) -> list[Path]:
+    c = 설정(뿌리)
+    본 = []
+    for 무늬 in c["문서"]:
+        본 += sorted(뿌리.glob(무늬))
+    빼기 = tuple(c["빼는것"])
+    나온것, 본것 = [], set()
+    for p in 본:
+        r = p.relative_to(뿌리).as_posix()
+        if p.is_file() and r not in 본것 and not any(x in "/" + r for x in 빼기):
+            본것.add(r)
+            나온것.append(p)
+    return 나온것
+
+
+def 상대(뿌리: Path, p: Path) -> str:
+    try:
+        return p.relative_to(뿌리).as_posix()
+    except ValueError:
+        return str(p)
+
+
+# ------------------------------------------------------------- 항 가르기 ----
+
+def 항들(글: str) -> list[tuple[int, str]]:
+    """문서를 항으로 가른다. 항은 불릿 한 줄 · 표 한 행 · 문단 하나다.
+
+    머리와 빈 줄과 인용(>)과 표의 구분선은 항이 아니다. 절 번호는 `##` 를 셈해서
+    붙인다 — 항을 가리키는 열쇠의 절반이 그 번호다."""
+    절, 결과, 문단 = 0, [], []
+
+    def 닫기():
+        if 문단:
+            결과.append((절, " ".join(문단)))
+            문단.clear()
+
+    for l in 글.splitlines():
+        s = l.strip()
+        m = re.match(r"^(#+)\s", l)
+        if m:
+            닫기()
+            if m.group(1) == "##":
+                절 += 1
+            continue
+        if not s or s.startswith(">") or re.match(r"^\|[\s:|-]+\|$", s):
+            닫기()
+            continue
+        if s.startswith(("-", "*", "|")) or re.match(r"^\d+\.", s):
+            닫기()
+            결과.append((절, s))
+        else:
+            문단.append(s)
+    닫기()
+    return 결과
+
+
+def 항열쇠(절: int, 본문: str) -> str:
+    """항을 가리키는 열쇠. 줄 번호는 문서를 고치면 밀리므로 본문 앞머리로 만든다.
+
+    앞머리가 바뀌면 열쇠도 바뀌고 그 항은 판정이 없는 것으로 돌아간다 — 내용이
+    바뀌었으면 다시 판정받아야 하므로 그것이 맞는 동작이다."""
+    민 = re.sub(r"[`*_|#\[\]()]", "", 본문)
+    민 = re.sub(r"^[-*\d.\s]+", "", 민)
+    민 = re.sub(r"\s+", " ", 민).strip()
+    return f"{절}:{민[:24]}"
+
+
+# --------------------------------------------------------------- 사이드카 ----
+
+def 사이드카(p: Path) -> Path:
+    return p.with_name(p.name + ".meta.yml")
+
+
+def 값만(칸) -> str:
+    """사이드카의 한 칸에서 값만 꺼낸다.
+
+    칸은 두 모양이다. 글자 하나면 사람이 검토 문서를 커밋해서 들어온 판정이고,
+    표(누가 · 근거)면 사람이 대화로만 말해서 클로드가 적은 판정이다."""
+    return 칸 if isinstance(칸, str) else str((칸 or {}).get("누가") or "없다")
+
+
+def 항출처_읽기(p: Path) -> dict:
+    side = 사이드카(p)
+    if not side.is_file():
+        return {}
+    try:
+        meta = yaml.safe_load(side.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    return dict((meta or {}).get("항출처") or {})
+
+
+def 항출처_쓰기(p: Path, 표: dict) -> None:
+    side = 사이드카(p)
+    meta = {}
+    if side.is_file():
+        meta = yaml.safe_load(side.read_text(encoding="utf-8")) or {}
+    meta["항출처"] = dict(sorted(표.items()))
+    meta["updated"] = date.today().isoformat()
+    side.write_text(yaml.safe_dump(meta, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8")
+
+
+def 내가_적은_판정(p: Path) -> list[tuple[str, str, str]]:
+    """사람의 커밋에서 오지 않고 클로드가 적은 판정. 열쇠 · 값 · 근거."""
+    return [(k, 값만(v), str((v or {}).get("근거") or ""))
+            for k, v in 항출처_읽기(p).items() if not isinstance(v, str)]
+
+
+def 현황(p: Path) -> list[tuple[str, int, str, str]]:
+    """그 문서의 항과, 항마다 지금 붙어 있는 값."""
+    표 = 항출처_읽기(p)
+    줄 = []
+    for 절, 본문 in 항들(p.read_text(encoding="utf-8")):
+        열쇠 = 항열쇠(절, 본문)
+        줄.append((열쇠, 절, 본문, 값만(표.get(열쇠, "없다"))))
+    return 줄
+
+
+# --------------------------------------------------- 판정은 사람의 커밋에서 ----
+
+def 사람이_쓴_줄(뿌리: Path, 쪽: Path, 사람메일: list[str] | None = None) -> set[int]:
+    """그 파일에서 사람이 직접 커밋한 줄 번호. git blame 이 판정한다.
+
+    판정을 클로드가 적을 수 있으면 이 대장은 아무것도 보장하지 못한다. 사람이 커밋한
+    줄은 커밋한 사람이 달라서 클로드의 줄과 기계적으로 갈린다.
+
+    막지 못하는 것을 적어 둔다. 클로드가 사람 이름으로 커밋하면 뚫린다 — 그것은 부르는
+    레포의 훅이 도구 직전에 막아야 한다. 그리고 사람이 직접 커밋할 수 없는 자리(대화로만
+    한 판정)는 이 길로 못 들어온다. 그런 판정은 클로드가 적고 근거를 남기며, 세는 쪽이
+    「클로드가 적은 판정」으로 따로 세어 눈에 보이게 한다."""
+    if not 쪽.is_file():
+        return set()
+    r = subprocess.run(["git", "blame", "--line-porcelain", "--", 상대(뿌리, 쪽)],
+                       cwd=뿌리, capture_output=True, text=True)
+    if r.returncode != 0:
+        return set()
+    허용 = [m.lower() for m in (사람메일 or [])]
+    나온것, 줄번호 = set(), 0
+    for l in r.stdout.splitlines():
+        m = re.match(r"^[0-9a-f]{7,40} \d+ (\d+)", l)
+        if m:
+            줄번호 = int(m.group(1))
+        elif l.startswith("author-mail "):
+            메일 = l[len("author-mail "):].strip().strip("<>").lower()
+            사람인가 = (메일 in 허용) if 허용 else (클로드메일 not in 메일)
+            if 사람인가:
+                나온것.add(줄번호)
+    return 나온것
+
+
+# ------------------------------------------------------------- 검토 문서 ----
+
+def 검토문서_만들기(뿌리: Path, p: Path, write: bool = True) -> str:
+    """사람이 한 항씩 판정할 수 있는 문서를 만든다.
+
+    표가 아니라 항마다 블록으로 낸다. 문서의 표 행 하나가 1,500자를 넘는 일이 있는데,
+    그것을 표의 한 칸에 넣으면 오른쪽 끝의 낱말을 찾을 수 없다."""
+    줄목록 = 현황(p)
+    안된것 = sum(1 for *_x, v in 줄목록 if v == "없다")
+    글 = [f"# 누가 냈나 — {상대(뿌리, p)}", "",
+         f"> 항 {len(줄목록)}개 가운데 아직 판정이 없는 것이 {안된것}개다.",
+         "> 각 항 아래 `누가:` 줄에 한 낱말만 적으신다. 항 본문은 고치지 않는다.", ""]
+    글 += [f"- `{k}` — {v}" for k, v in 누가냈나.items()]
+    글 += ["",
+          "**적으신 뒤에 이 파일을 커밋해 주셔야 한다.** 판정이 사람의 커밋에서 왔는지를",
+          "`git blame` 이 보고, 클로드가 적은 줄은 받지 않는다.", "", "---", ""]
+    for _열쇠, 절, 본문, 값 in 줄목록:
+        글 += [f"### {절}절", "", 본문, "", f"누가: {값}", ""]
+    글 = "\n".join(글) + "\n"
+    if write:
+        (뿌리 / 검토문서).write_text(글, encoding="utf-8")
+    return 글
+
+
+def 검토문서_읽기(뿌리: Path, p: Path) -> tuple[int, list, int]:
+    """사람이 채운 문서를 사이드카로 옮긴다. 사람이 커밋한 줄만 받는다."""
+    쪽 = 뿌리 / 검토문서
+    if not 쪽.is_file():
+        raise SystemExit(f"{검토문서} 가 없다. 먼저 만든다.")
+    줄들 = 쪽.read_text(encoding="utf-8").splitlines()
+    if 상대(뿌리, p) not in 줄들[0]:
+        raise SystemExit(f"{검토문서} 는 지금 «{줄들[0]}» 의 것이다. 그 문서로 다시 만든다.")
+    사람줄 = 사람이_쓴_줄(뿌리, 쪽, 설정(뿌리)["사람메일"])
+    지금 = 항출처_읽기(p)
+    거꾸로 = {(절, 본문): 열쇠 for 열쇠, 절, 본문, _v in 현황(p)}
+
+    바뀐, 튄것, 클로드것 = 0, [], 0
+    절, 본문 = None, None
+    for i, l in enumerate(줄들, start=1):
+        m = re.match(r"^### (\d+)절$", l.strip())
+        if m:
+            절, 본문 = int(m.group(1)), None
+            continue
+        if 절 is not None and 본문 is None and l.strip() and not l.startswith("누가:"):
+            본문 = l.strip()
+            continue
+        if not l.startswith("누가:"):
+            continue
+        값 = l[len("누가:"):].strip()
+        열쇠 = 거꾸로.get((절, 본문))
+        if 값 not in 누가냈나:
+            튄것.append(f"{i}줄 — 모르는 값 «{값}»")
+        elif 열쇠 is None:
+            튄것.append(f"{i}줄 — 문서에 없는 항이다")
+        elif i not in 사람줄:
+            if 값 != "없다" and 값만(지금.get(열쇠, "없다")) != 값:
+                클로드것 += 1
+        elif 값 == "없다":
+            if 지금.pop(열쇠, None) is not None:
+                바뀐 += 1
+        elif 값만(지금.get(열쇠, "없다")) != 값:
+            지금[열쇠] = 값
+            바뀐 += 1
+        절, 본문 = None, None
+    항출처_쓰기(p, 지금)
+    return 바뀐, 튄것, 클로드것
+
+
+# ------------------------------------------------------------------ 세기 ----
+
+def 세기(뿌리: Path) -> tuple[int, int, list]:
+    """항 전체 · 판정 없는 항 · 문서마다의 수. 이 수가 늘면 막는 것은 부르는 쪽이다."""
+    전체, 표 = 0, []
+    for p in 세는문서(뿌리):
+        줄목록 = 현황(p)
+        n = sum(1 for *_x, v in 줄목록 if v == "없다")
+        전체 += len(줄목록)
+        if n:
+            표.append((n, len(줄목록), 상대(뿌리, p)))
+    표.sort(reverse=True)
+    return 전체, sum(n for n, _t, _f in 표), 표
