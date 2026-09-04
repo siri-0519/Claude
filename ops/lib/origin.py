@@ -348,12 +348,15 @@ def 일감_출처(뿌리: Path, 파생: Path) -> list[tuple[Path, list]]:
     """그 파생물이 기대는 출처와 절. 사이드카의 derives_from 을 뒤집는다."""
     meta = _메타(파생)
     지도 = 아티팩트찾기(뿌리)
+    # 판정할 문서는 `.origin.yml` 이 정한다. 출처로 적혀 있어도 그 목록 밖이면 안 낸다 —
+    # 원고는 지침에도 기대는데, 지침은 규칙이지 판정할 지식이 아니다 (2026-09-04).
+    셀것 = {q.resolve() for q in 세는문서(뿌리)}
     나온것 = []
     for e in meta.get("derives_from") or []:
         아이디 = e.get("id") if isinstance(e, dict) else e
         절 = list(e.get("절") or []) if isinstance(e, dict) else []
         본 = 지도.get(str(아이디))
-        if 본 and 본.is_file():
+        if 본 and 본.is_file() and 본.resolve() in 셀것:
             나온것.append((본, [int(x) for x in 절]))
     return 나온것
 
