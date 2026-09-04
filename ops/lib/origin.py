@@ -315,58 +315,146 @@ def 사람이_쓴_줄(뿌리: Path, 쪽: Path, 사람메일: list[str] | None = 
     return 나온것
 
 
+# ------------------------------------------------------------- 일감 고르기 ----
+# 왜 있는가 (2026-09-04): 검토 문서가 문서 하나를 통째로 냈다. 정본 하나가 94항이고
+# 결정 대장 하나가 191항이라 사람이 못 쓴다. 세 레포에 판정 없는 항이 9,000개 넘게
+# 밀려 있는데 판정된 항은 0개였다 — 만들어만 놓고 한 번도 안 쓴 것이 그 증거다.
+#
+# 다 판정하는 것은 목표가 아니다. 목표는 「지금 쓰는 대목만 판정된 상태」다. 그러려면
+# 지금 쓰는 대목을 골라낼 수 있어야 한다. 고르는 길이 셋이다 — 절로, 낱말로, 그리고
+# 일감으로. 마지막 것이 핵심이다: 어떤 파생물(원고 · 각색본)이 어느 출처의 어느 절에
+# 기대는지가 이미 사이드카에 적혀 있으므로, 그것을 뒤집으면 「이 원고를 쓰려면 어느
+# 항을 판정해야 하는가」가 나온다.
+
+def 아티팩트찾기(뿌리: Path) -> dict:
+    """사이드카에 적힌 id → 그 파일. 출처를 id 로 가리키는 것을 풀기 위해서다."""
+    나온것 = {}
+    for side in 뿌리.rglob("*.meta.yml"):
+        if ".git" in side.parts or ".claude-ops" in side.parts:
+            continue
+        본 = side.with_name(side.name[: -len(".meta.yml")])
+        if not 본.is_file():
+            continue
+        try:
+            meta = yaml.safe_load(side.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        이름 = str(meta.get("id") or 상대(뿌리, 본))
+        나온것[이름] = 본
+    return 나온것
+
+
+def 일감_출처(뿌리: Path, 파생: Path) -> list[tuple[Path, list]]:
+    """그 파생물이 기대는 출처와 절. 사이드카의 derives_from 을 뒤집는다."""
+    meta = _메타(파생)
+    지도 = 아티팩트찾기(뿌리)
+    나온것 = []
+    for e in meta.get("derives_from") or []:
+        아이디 = e.get("id") if isinstance(e, dict) else e
+        절 = list(e.get("절") or []) if isinstance(e, dict) else []
+        본 = 지도.get(str(아이디))
+        if 본 and 본.is_file():
+            나온것.append((본, [int(x) for x in 절]))
+    return 나온것
+
+
+def 고르기(p: Path, 절: list | None = None, 찾기: str | None = None,
+        판정없는것만: bool = True) -> list:
+    """그 문서에서 판정할 항만 고른다."""
+    줄목록, _앵커, _흐른것, _사라진 = 맞추기(p)
+    골 = []
+    for 이름, 절번호, 본문, 값, 흐름 in 줄목록:
+        if 절 and 절번호 not in 절:
+            continue
+        if 찾기 and 찾기 not in 본문:
+            continue
+        if 판정없는것만 and 값 != "없다" and not 흐름:
+            continue
+        골.append((이름, 절번호, 본문, 값, 흐름))
+    return 골
+
+
 # ------------------------------------------------------------- 검토 문서 ----
 
-def 검토문서_만들기(뿌리: Path, p: Path, write: bool = True) -> str:
-    """사람이 한 항씩 판정할 수 있는 문서를 만든다.
+def 검토문서_만들기(뿌리: Path, 대상들: list, 제목: str = "", 몇개: int | None = None,
+              찾기: str | None = None, write: bool = True) -> tuple[str, int]:
+    """사람이 한 항씩 판정할 문서를 만든다. 대상들은 (파일, 절목록|None) 의 목록이다.
 
     표가 아니라 항마다 블록으로 낸다. 문서의 표 행 하나가 1,500자를 넘는 일이 있는데,
     그것을 표의 한 칸에 넣으면 오른쪽 끝의 낱말을 찾을 수 없다."""
-    줄목록, 앵커, 흐른것, _사라진 = 맞추기(p)
-    쓰기(p, 항출처_읽기(p), 앵커)     # 이름을 지금 본문에 묶어 둔다
-    안된것 = sum(1 for *_x, v, _f in 줄목록 if v == "없다")
-    글 = [f"# 누가 냈나 — {상대(뿌리, p)}", "",
-         f"> 항 {len(줄목록)}개 가운데 아직 판정이 없는 것이 {안된것}개다.",
-         "> 각 항 아래 `누가:` 줄에 한 낱말만 적으신다. 나머지 줄은 고치지 않는다 —",
-         "> `[이름]` 으로 어느 항인지를 찾는다. 본문이 바뀌어도 판정이 안 날아간다.", ""]
-    if 흐른것:
-        글 += [f"> **본문이 바뀐 채로 이어 붙인 항이 {len(흐른것)}개 있다.** "
-              f"판정이 그대로 따라왔으니 맞는지 봐 주신다.", ""]
+    덩이, 셈 = [], 0
+    for p, 절 in 대상들:
+        골 = 고르기(p, 절, 찾기)
+        if not 골:
+            continue
+        덩이.append((p, 골))
+        셈 += len(골)
+
+    남은 = 몇개
+    글 = [f"# 누가 냈나 — {제목 or (상대(뿌리, 대상들[0][0]) if 대상들 else '')}", "",
+         f"> 판정할 항이 {셈}개다."
+         + (f" 그 가운데 앞에서 {min(몇개, 셈)}개만 담았다." if 몇개 and 몇개 < 셈 else ""),
+         "> 각 항 아래 `누가:` 줄에 한 낱말만 적으신다. 나머지 줄은 고치지 않는다.", ""]
     글 += [f"- `{k}` — {v}" for k, v in 누가냈나.items()]
     글 += ["",
           "**적으신 뒤에 이 파일을 커밋해 주셔야 한다.** 판정이 사람의 커밋에서 왔는지를",
           "`git blame` 이 보고, 클로드가 적은 줄은 받지 않는다.", "", "---", ""]
-    흐름이름 = {x[0] for x in 흐른것}
-    for 이름, 절, 본문, 값, _흐름 in 줄목록:
-        머리 = f"### [{이름}] {절}절" + ("  — 본문이 바뀌었다" if 이름 in 흐름이름 else "")
-        글 += [머리, "", 본문, "", f"누가: {값}", ""]
+
+    담은 = 0
+    for p, 골 in 덩이:
+        if 남은 is not None and 남은 <= 0:
+            break
+        쓸것 = 골 if 남은 is None else 골[:남은]
+        if 남은 is not None:
+            남은 -= len(쓸것)
+        글 += [f"## {상대(뿌리, p)}", ""]
+        for 이름, 절, 본문, 값, 흐름 in 쓸것:
+            머리 = f"### [{이름}] {절}절" + ("  — 본문이 바뀌었다" if 흐름 else "")
+            글 += [머리, "", 본문, "", f"누가: {값}", ""]
+            담은 += 1
+        _줄, 앵커, _흐른것, _사라진 = 맞추기(p)
+        쓰기(p, 항출처_읽기(p), 앵커)     # 이름을 지금 본문에 묶어 둔다
+
     글 = "\n".join(글) + "\n"
     if write:
         (뿌리 / 검토문서).write_text(글, encoding="utf-8")
-    return 글
+    return 글, 담은
 
 
-def 검토문서_읽기(뿌리: Path, p: Path) -> tuple[int, list, int]:
+def 검토문서_읽기(뿌리: Path) -> tuple[int, list, int]:
     """사람이 채운 문서를 사이드카로 옮긴다. 사람이 커밋한 줄만 받는다."""
     쪽 = 뿌리 / 검토문서
     if not 쪽.is_file():
         raise SystemExit(f"{검토문서} 가 없다. 먼저 만든다.")
     줄들 = 쪽.read_text(encoding="utf-8").splitlines()
-    if 상대(뿌리, p) not in 줄들[0]:
-        raise SystemExit(f"{검토문서} 는 지금 «{줄들[0]}» 의 것이다. 그 문서로 다시 만든다.")
     사람줄 = 사람이_쓴_줄(뿌리, 쪽, 설정(뿌리)["사람메일"])
-    줄목록, 앵커, _흐른것, _사라진 = 맞추기(p)
-    지금 = 항출처_읽기(p)
-    아는이름 = {이름 for 이름, *_ in 줄목록}
 
     바뀐, 튄것, 클로드것 = 0, [], 0
+    지금파일, 지금 , 앵커, 아는이름 = None, {}, {}, set()
     이름 = None
+
+    def 닫기():
+        if 지금파일 is not None:
+            쓰기(지금파일, 지금, 앵커)
+
     for i, l in enumerate(줄들, start=1):
+        m = re.match(r"^## (\S+)$", l.strip())
+        if m:
+            닫기()
+            지금파일 = 뿌리 / m.group(1)
+            if not 지금파일.is_file():
+                튄것.append(f"{i}줄 — 그런 문서가 없다: {m.group(1)}")
+                지금파일 = None
+                continue
+            줄목록, 앵커, _흐른것, _사라진 = 맞추기(지금파일)
+            지금 = 항출처_읽기(지금파일)
+            아는이름 = {x[0] for x in 줄목록}
+            continue
         m = re.match(r"^### \[([0-9a-f]{8})\]", l.strip())
         if m:
             이름 = m.group(1)
             continue
-        if not l.startswith("누가:"):
+        if not l.startswith("누가:") or 지금파일 is None:
             continue
         값 = l[len("누가:"):].strip()
         if 값 not in 누가냈나:
@@ -383,7 +471,7 @@ def 검토문서_읽기(뿌리: Path, p: Path) -> tuple[int, list, int]:
             지금[이름] = 값
             바뀐 += 1
         이름 = None
-    쓰기(p, 지금, 앵커)
+    닫기()
     return 바뀐, 튄것, 클로드것
 
 
