@@ -30,6 +30,8 @@
 """
 from __future__ import annotations
 
+import difflib
+import hashlib
 import re
 import subprocess
 from datetime import date
@@ -123,21 +125,118 @@ def 항들(글: str) -> list[tuple[int, str]]:
     return 결과
 
 
-def 항열쇠(절: int, 본문: str) -> str:
-    """항을 가리키는 열쇠. 줄 번호는 문서를 고치면 밀리므로 본문 앞머리로 만든다.
-
-    앞머리가 바뀌면 열쇠도 바뀌고 그 항은 판정이 없는 것으로 돌아간다 — 내용이
-    바뀌었으면 다시 판정받아야 하므로 그것이 맞는 동작이다."""
+def 앞머리(본문: str) -> str:
+    """항의 본문에서 표기를 걷어낸 앞부분. 항을 알아보는 데 쓴다."""
     민 = re.sub(r"[`*_|#\[\]()]", "", 본문)
     민 = re.sub(r"^[-*\d.\s]+", "", 민)
     민 = re.sub(r"\s+", " ", 민).strip()
-    return f"{절}:{민[:24]}"
+    return 민[:24]
+
+
+def 항열쇠(절: int, 본문: str) -> str:
+    """옛 열쇠. 사이드카에 이 모양으로 적힌 것을 읽기 위해서만 남긴다."""
+    return f"{절}:{앞머리(본문)}"
+
+
+def 항이름(절: int, 본문: str) -> str:
+    """항에 처음 붙이는 이름. 한 번 붙으면 본문이 바뀌어도 그대로 간다.
+
+    왜 이름이 따로 필요한가 (2026-09-04). 처음에는 「절 번호 + 본문 앞 24자」를 열쇠로
+    썼는데, 그러면 본문의 오타 하나만 고쳐도 열쇠가 바뀌고 사람이 내린 판정이 통째로
+    날아갔다. 판정을 6,700번 받아 놓고 문장을 다듬으면 다 없어지는 구조였다.
+
+    그래서 이름은 처음 볼 때 한 번 짓고, 그 뒤로는 앵커(사이드카의 `항` 칸)가 그 이름과
+    그때의 앞머리를 함께 갖는다. 다음에 읽을 때는 앞머리로 다시 찾고, 앞머리가 조금
+    달라졌으면 닮은 정도로 잇는다. 많이 달라졌으면 잇지 않는다 — 사람이 판정한 것은
+    그때의 문장이므로, 문장이 달라졌으면 다시 판정받아야 한다."""
+    씨 = f"{절}:{앞머리(본문)}"
+    return hashlib.sha1(씨.encode("utf-8")).hexdigest()[:8]
+
+
+# 앞머리가 이만큼 닮았으면 같은 항으로 본다. 이보다 멀면 새 항이고 판정이 없다.
+닮음선 = 0.62
+
+
+def 닮음(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def 맞추기(p: Path) -> tuple[list, dict, list, int]:
+    """지금 문서의 항을 사이드카의 앵커에 맞춘다.
+
+    돌려주는 것 넷:
+      줄목록  (이름, 절, 본문, 값, 흐름) — 흐름은 앞머리가 달라진 채로 이어 붙인 항이다
+      앵커    이름 → "절:앞머리". 지금 문서에 있는 항만 남는다
+      흐른것  (이름, 옛 앞머리, 새 앞머리) — 사람에게 다시 보여야 하는 것들
+      사라진수 앵커에는 있는데 문서에 없는 항. 그 판정은 버린다
+    """
+    메타 = _메타(p)
+    옛앵커 = dict(메타.get("항") or {})
+    판정 = dict(메타.get("항출처") or {})
+
+    # 옛 모양(절:앞머리 를 열쇠로 쓰던 것)을 앵커로 옮긴다
+    for k in list(판정):
+        if re.match(r"^\d+:", k) and k not in 옛앵커.values():
+            이름 = hashlib.sha1(k.encode("utf-8")).hexdigest()[:8]
+            옛앵커[이름] = k
+            판정[이름] = 판정.pop(k)
+
+    지금 = [(절, 본문, f"{절}:{앞머리(본문)}") for 절, 본문 in 항들(p.read_text(encoding="utf-8"))]
+    남은앵커 = dict(옛앵커)
+    붙인것 = {}
+
+    # 1. 절과 앞머리가 그대로인 것부터
+    for i, (_절, _본문, 씨) in enumerate(지금):
+        for 이름, 옛씨 in list(남은앵커.items()):
+            if 옛씨 == 씨:
+                붙인것[i] = (이름, False)
+                del 남은앵커[이름]
+                break
+
+    # 2. 남은 것은 같은 절 안에서 가장 닮은 앵커에 잇는다
+    흐른것 = []
+    for i, (절, _본문, 씨) in enumerate(지금):
+        if i in 붙인것:
+            continue
+        짝, 점수 = None, 0.0
+        for 이름, 옛씨 in 남은앵커.items():
+            if not 옛씨.startswith(f"{절}:"):
+                continue
+            s = 닮음(옛씨.split(":", 1)[1], 씨.split(":", 1)[1])
+            if s > 점수:
+                짝, 점수 = 이름, s
+        if 짝 and 점수 >= 닮음선:
+            붙인것[i] = (짝, True)
+            흐른것.append((짝, 남은앵커[짝], 씨))
+            del 남은앵커[짝]
+
+    # 3. 그래도 안 붙은 것은 새 항이다
+    줄목록, 새앵커 = [], {}
+    for i, (절, 본문, 씨) in enumerate(지금):
+        이름, 흐름 = 붙인것.get(i, (None, False))
+        if 이름 is None:
+            이름 = 항이름(절, 본문)
+            while 이름 in 새앵커:
+                이름 = hashlib.sha1((이름 + 씨).encode("utf-8")).hexdigest()[:8]
+        새앵커[이름] = 씨
+        줄목록.append((이름, 절, 본문, 값만(판정.get(이름, "없다")), 흐름))
+    return 줄목록, 새앵커, 흐른것, len(남은앵커)
 
 
 # --------------------------------------------------------------- 사이드카 ----
 
 def 사이드카(p: Path) -> Path:
     return p.with_name(p.name + ".meta.yml")
+
+
+def _메타(p: Path) -> dict:
+    side = 사이드카(p)
+    if not side.is_file():
+        return {}
+    try:
+        return yaml.safe_load(side.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
 
 
 def 값만(칸) -> str:
@@ -149,41 +248,39 @@ def 값만(칸) -> str:
 
 
 def 항출처_읽기(p: Path) -> dict:
-    side = 사이드카(p)
-    if not side.is_file():
-        return {}
-    try:
-        meta = yaml.safe_load(side.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return {}
-    return dict((meta or {}).get("항출처") or {})
+    return dict(_메타(p).get("항출처") or {})
 
 
-def 항출처_쓰기(p: Path, 표: dict) -> None:
-    side = 사이드카(p)
-    meta = {}
-    if side.is_file():
-        meta = yaml.safe_load(side.read_text(encoding="utf-8")) or {}
-    meta["항출처"] = dict(sorted(표.items()))
+def 쓰기(p: Path, 판정: dict, 앵커: dict) -> None:
+    """판정과 앵커를 같이 적는다. 둘은 짝이라 따로 적으면 어긋난다."""
+    meta = _메타(p)
+    meta["항"] = dict(sorted(앵커.items()))
+    meta["항출처"] = {k: v for k, v in sorted(판정.items()) if k in 앵커}
     meta["updated"] = date.today().isoformat()
-    side.write_text(yaml.safe_dump(meta, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8")
+    사이드카(p).write_text(
+        yaml.safe_dump(meta, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def 내가_적은_판정(p: Path) -> list[tuple[str, str, str]]:
-    """사람의 커밋에서 오지 않고 클로드가 적은 판정. 열쇠 · 값 · 근거."""
+    """사람의 커밋에서 오지 않고 클로드가 적은 판정. 이름 · 값 · 근거."""
     return [(k, 값만(v), str((v or {}).get("근거") or ""))
             for k, v in 항출처_읽기(p).items() if not isinstance(v, str)]
 
 
 def 현황(p: Path) -> list[tuple[str, int, str, str]]:
-    """그 문서의 항과, 항마다 지금 붙어 있는 값."""
-    표 = 항출처_읽기(p)
-    줄 = []
-    for 절, 본문 in 항들(p.read_text(encoding="utf-8")):
-        열쇠 = 항열쇠(절, 본문)
-        줄.append((열쇠, 절, 본문, 값만(표.get(열쇠, "없다"))))
-    return 줄
+    """그 문서의 항과, 항마다 지금 붙어 있는 값. 이름 · 절 · 본문 · 값."""
+    줄목록, _앵커, _흐른것, _사라진 = 맞추기(p)
+    return [(이름, 절, 본문, 값) for 이름, 절, 본문, 값, _흐름 in 줄목록]
+
+
+def 앵커_고치기(p: Path) -> tuple[list, int]:
+    """지금 문서에 맞춰 앵커를 다시 적는다. 흐른 항과 사라진 항의 수를 돌려준다.
+
+    본문을 고친 뒤에 이것을 돌려야 판정이 새 문장을 따라간다. 돌리지 않으면 판정은
+    옛 앞머리에 묶여 있고, 다음에 읽을 때 닮음으로 다시 찾긴 하지만 매번 다시 찾는다."""
+    줄목록, 앵커, 흐른것, 사라진 = 맞추기(p)
+    쓰기(p, 항출처_읽기(p), 앵커)
+    return 흐른것, 사라진
 
 
 # --------------------------------------------------- 판정은 사람의 커밋에서 ----
@@ -225,17 +322,24 @@ def 검토문서_만들기(뿌리: Path, p: Path, write: bool = True) -> str:
 
     표가 아니라 항마다 블록으로 낸다. 문서의 표 행 하나가 1,500자를 넘는 일이 있는데,
     그것을 표의 한 칸에 넣으면 오른쪽 끝의 낱말을 찾을 수 없다."""
-    줄목록 = 현황(p)
-    안된것 = sum(1 for *_x, v in 줄목록 if v == "없다")
+    줄목록, 앵커, 흐른것, _사라진 = 맞추기(p)
+    쓰기(p, 항출처_읽기(p), 앵커)     # 이름을 지금 본문에 묶어 둔다
+    안된것 = sum(1 for *_x, v, _f in 줄목록 if v == "없다")
     글 = [f"# 누가 냈나 — {상대(뿌리, p)}", "",
          f"> 항 {len(줄목록)}개 가운데 아직 판정이 없는 것이 {안된것}개다.",
-         "> 각 항 아래 `누가:` 줄에 한 낱말만 적으신다. 항 본문은 고치지 않는다.", ""]
+         "> 각 항 아래 `누가:` 줄에 한 낱말만 적으신다. 나머지 줄은 고치지 않는다 —",
+         "> `[이름]` 으로 어느 항인지를 찾는다. 본문이 바뀌어도 판정이 안 날아간다.", ""]
+    if 흐른것:
+        글 += [f"> **본문이 바뀐 채로 이어 붙인 항이 {len(흐른것)}개 있다.** "
+              f"판정이 그대로 따라왔으니 맞는지 봐 주신다.", ""]
     글 += [f"- `{k}` — {v}" for k, v in 누가냈나.items()]
     글 += ["",
           "**적으신 뒤에 이 파일을 커밋해 주셔야 한다.** 판정이 사람의 커밋에서 왔는지를",
           "`git blame` 이 보고, 클로드가 적은 줄은 받지 않는다.", "", "---", ""]
-    for _열쇠, 절, 본문, 값 in 줄목록:
-        글 += [f"### {절}절", "", 본문, "", f"누가: {값}", ""]
+    흐름이름 = {x[0] for x in 흐른것}
+    for 이름, 절, 본문, 값, _흐름 in 줄목록:
+        머리 = f"### [{이름}] {절}절" + ("  — 본문이 바뀌었다" if 이름 in 흐름이름 else "")
+        글 += [머리, "", 본문, "", f"누가: {값}", ""]
     글 = "\n".join(글) + "\n"
     if write:
         (뿌리 / 검토문서).write_text(글, encoding="utf-8")
@@ -251,38 +355,35 @@ def 검토문서_읽기(뿌리: Path, p: Path) -> tuple[int, list, int]:
     if 상대(뿌리, p) not in 줄들[0]:
         raise SystemExit(f"{검토문서} 는 지금 «{줄들[0]}» 의 것이다. 그 문서로 다시 만든다.")
     사람줄 = 사람이_쓴_줄(뿌리, 쪽, 설정(뿌리)["사람메일"])
+    줄목록, 앵커, _흐른것, _사라진 = 맞추기(p)
     지금 = 항출처_읽기(p)
-    거꾸로 = {(절, 본문): 열쇠 for 열쇠, 절, 본문, _v in 현황(p)}
+    아는이름 = {이름 for 이름, *_ in 줄목록}
 
     바뀐, 튄것, 클로드것 = 0, [], 0
-    절, 본문 = None, None
+    이름 = None
     for i, l in enumerate(줄들, start=1):
-        m = re.match(r"^### (\d+)절$", l.strip())
+        m = re.match(r"^### \[([0-9a-f]{8})\]", l.strip())
         if m:
-            절, 본문 = int(m.group(1)), None
-            continue
-        if 절 is not None and 본문 is None and l.strip() and not l.startswith("누가:"):
-            본문 = l.strip()
+            이름 = m.group(1)
             continue
         if not l.startswith("누가:"):
             continue
         값 = l[len("누가:"):].strip()
-        열쇠 = 거꾸로.get((절, 본문))
         if 값 not in 누가냈나:
             튄것.append(f"{i}줄 — 모르는 값 «{값}»")
-        elif 열쇠 is None:
-            튄것.append(f"{i}줄 — 문서에 없는 항이다")
+        elif 이름 not in 아는이름:
+            튄것.append(f"{i}줄 — 문서에 없는 항이다 ({이름})")
         elif i not in 사람줄:
-            if 값 != "없다" and 값만(지금.get(열쇠, "없다")) != 값:
+            if 값 != "없다" and 값만(지금.get(이름, "없다")) != 값:
                 클로드것 += 1
         elif 값 == "없다":
-            if 지금.pop(열쇠, None) is not None:
+            if 지금.pop(이름, None) is not None:
                 바뀐 += 1
-        elif 값만(지금.get(열쇠, "없다")) != 값:
-            지금[열쇠] = 값
+        elif 값만(지금.get(이름, "없다")) != 값:
+            지금[이름] = 값
             바뀐 += 1
-        절, 본문 = None, None
-    항출처_쓰기(p, 지금)
+        이름 = None
+    쓰기(p, 지금, 앵커)
     return 바뀐, 튄것, 클로드것
 
 
