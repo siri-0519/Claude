@@ -158,7 +158,12 @@ def 설정짓기(위: Path, ops: Path) -> dict:
                              .replace("${CLAUDE_PROJECT_DIR}", str(r)) \
                              .replace("$CLAUDE_PROJECT_DIR", str(r))
                     이름 = Path(cmd.split()[0].strip('"')).name
-                    if 이름 in 답훅 or 이벤트 == "UserPromptSubmit":
+                    # 답을 보는 훅은 이름 목록만으로 못 가른다 — broadcast 의 답 검사가
+                    # 목록에 없어서 creation 의 대화에 걸렸다 (2026-09-05). 답 끝 자리에서
+                    # transcript 를 읽는 스크립트는 전부 답 훅으로 본다.
+                    답읽음 = 이벤트 == "Stop" and (h / 이름).is_file() and \
+                        "transcript_path" in (h / 이름).read_text(encoding="utf-8", errors="ignore")
+                    if 이름 in 답훅 or 이벤트 == "UserPromptSubmit" or 답읽음:
                         if 주 is None or r != 주:
                             continue
                     if not (h / 이름).is_file():
