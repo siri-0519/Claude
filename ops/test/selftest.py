@@ -363,6 +363,46 @@ ok("the file's own preamble comes along, so an item reads in context",
    "4루프부터 최연아다" in origin.머리말(_글), origin.머리말(_글)[:60])
 
 
+# ---------------------------------------------------------------------------
+print("\n[human] a judgement counts only when a human commit carries it")
+# 저자 메일로 갈랐더니 .git/config 에 [user] 를 덧붙이는 것으로 뚫렸고, 사이드카에
+# 글자를 직접 쓰는 것으로 판정 수가 줄었다 (2026-09-05 실측). 이제 판정은 {누가, 커밋}
+# 이고, 그 커밋이 사람 커밋이며, 그 커밋의 검토 문서에 그 값이 있어야 센다.
+
+_H = Path(tempfile.mkdtemp(prefix="human-"))
+subprocess.run(["git", "init", "-q", str(_H)], check=True)
+subprocess.run(["git", "-C", str(_H), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_H), "config", "user.name", "t"], check=True)
+(_H / ".origin.yml").write_text("문서:\n  - \"*.md\"\n사람확인: 메일\n사람메일:\n  - \"human@x\"\n", encoding="utf-8")
+(_H / "ORIGIN-REVIEW.md").write_text("# x\n\n<!-- 항 aaaaaaaa -->\n\n본문\n\n누가: 작가\n\n<!-- 항 bbbbbbbb -->\n\n본문\n\n누가: 없다\n", encoding="utf-8")
+def _commit(email):
+    subprocess.run(["git", "-C", str(_H), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(_H), "commit", "-q", "-m", "t"], check=True,
+                   env={**os.environ, "GIT_AUTHOR_EMAIL": email, "GIT_COMMITTER_EMAIL": email,
+                        "GIT_AUTHOR_NAME": "t", "GIT_COMMITTER_NAME": "t"})
+    return subprocess.run(["git", "-C", str(_H), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+_h = _commit("human@x")
+origin._사람커밋_캐시.clear()
+ok("a human's commit is recognised in mail mode", origin.사람커밋(_H, _h))
+ok("the judged line maps to that commit", origin.사람이_쓴_줄_커밋(_H, _H / "ORIGIN-REVIEW.md").get(7) == _h)
+ok("a judgement backed by that commit counts", origin.사람판정(_H, "aaaaaaaa", {"누가": "작가", "커밋": _h}))
+ok("the same commit cannot vouch for a value it does not contain",
+   not origin.사람판정(_H, "aaaaaaaa", {"누가": "채택", "커밋": _h}))
+ok("nor for an item it never judged", not origin.사람판정(_H, "bbbbbbbb", {"누가": "작가", "커밋": _h}))
+ok("a bare string written into the sidecar does not count", not origin.사람판정(_H, "aaaaaaaa", "작가"))
+ok("a dict without a commit does not count", not origin.사람판정(_H, "aaaaaaaa", {"누가": "작가", "근거": "chat"}))
+(_H / "ORIGIN-REVIEW.md").write_text((_H / "ORIGIN-REVIEW.md").read_text(encoding="utf-8").replace("누가: 없다", "누가: 채택"), encoding="utf-8")
+_c = _commit(origin.클로드메일)
+origin._사람커밋_캐시.clear()
+ok("Claude's own commit is not a human commit", not origin.사람커밋(_H, _c))
+ok("so a judgement it wrote does not count", not origin.사람판정(_H, "bbbbbbbb", {"누가": "채택", "커밋": _c}))
+(_H / ".origin.yml").write_text("문서:\n  - \"*.md\"\n사람확인: 서명\n", encoding="utf-8")
+origin._사람커밋_캐시.clear()
+ok("in signature mode a commit whose committer is not GitHub is rejected outright",
+   not origin.사람커밋(_H, _h) and "committer" in origin.사람커밋_사유.get(_h, ""), origin.사람커밋_사유.get(_h))
+shutil.rmtree(_H, ignore_errors=True)
+
+
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:
     print(f"  - {f}")

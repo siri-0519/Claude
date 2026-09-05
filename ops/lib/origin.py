@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import os
 import re
 import subprocess
 from datetime import date
@@ -41,6 +42,8 @@ import yaml
 
 # 클로드가 커밋할 때 쓰는 메일. 이 메일이 아닌 커밋을 사람의 것으로 본다.
 클로드메일 = "noreply@anthropic.com"
+사람커밋자 = "noreply@github.com"        # GitHub 웹 화면에서 만든 커밋의 committer
+웹플로우키 = ("B5690EEEBB952194", "4AEE18F83AFDEB23")   # GitHub 이 웹 커밋에 서명하는 키 — 지금 것 · 이전 것
 
 # 값은 넷이다. 한 낱말로 적는다.
 누가냈나 = {
@@ -66,6 +69,8 @@ def 설정(뿌리: Path) -> dict:
     d.setdefault("문서", [])
     d.setdefault("빼는것", [])
     d.setdefault("사람메일", [])
+    d.setdefault("사람확인", "서명")   # 서명 = GitHub 웹 커밋의 서명을 확인 · 메일 = 저자 메일만 (시험용)
+    d.setdefault("서명키", "")
     return d
 
 
@@ -315,8 +320,8 @@ def _메타(p: Path) -> dict:
 def 값만(칸) -> str:
     """사이드카의 한 칸에서 값만 꺼낸다.
 
-    칸은 두 모양이다. 글자 하나면 사람이 검토 문서를 커밋해서 들어온 판정이고,
-    표(누가 · 근거)면 사람이 대화로만 말해서 클로드가 적은 판정이다."""
+    사람의 판정은 {누가, 커밋} 이다. {누가, 근거} 는 사람이 대화로만 말해서 클로드가
+    적은 것이고, 글자 하나뿐인 옛 모양은 이제 받지 않는다 — 사람판정() 이 가른다."""
     return 칸 if isinstance(칸, str) else str((칸 or {}).get("누가") or "없다")
 
 
@@ -335,15 +340,37 @@ def 쓰기(p: Path, 판정: dict, 앵커: dict) -> None:
 
 
 def 내가_적은_판정(p: Path) -> list[tuple[str, str, str]]:
-    """사람의 커밋에서 오지 않고 클로드가 적은 판정. 이름 · 값 · 근거."""
-    return [(k, 값만(v), str((v or {}).get("근거") or ""))
-            for k, v in 항출처_읽기(p).items() if not isinstance(v, str)]
+    """사람의 판정으로 확인되지 않은 판정 전부. 이름 · 값 · 왜 안 받는가.
+
+    클로드가 근거를 달아 적은 것, 사이드카에 글자로 직접 쓴 것, 커밋은 있으나 사람
+    커밋이 아니거나 그 커밋의 검토 문서에 그 값이 없는 것 — 전부 여기 나온다.
+    막지는 않고 눈에 보이게 센다."""
+    뿌리 = 뿌리찾기(p)
+    나온것 = []
+    for k, v in 항출처_읽기(p).items():
+        값 = 값만(v)
+        if 값 == "없다" or 사람판정(뿌리, k, v):
+            continue
+        if isinstance(v, dict) and v.get("근거"):
+            왜 = "근거: " + str(v["근거"])
+        elif isinstance(v, dict) and v.get("커밋"):
+            왜 = 사람커밋_사유.get(str(v["커밋"]), "그 커밋의 검토 문서에 이 값이 없다")
+        else:
+            왜 = "사이드카에 글자로만 적혀 있다 — 사람 커밋이 없다"
+        나온것.append((k, 값, 왜))
+    return 나온것
 
 
 def 현황(p: Path) -> list[tuple[str, int, str, str]]:
-    """그 문서의 항과, 항마다 지금 붙어 있는 값. 이름 · 절 · 본문 · 값."""
+    """그 문서의 항과, 항마다 지금 붙어 있는 값. 이름 · 절 · 본문 · 값.
+
+    값은 사람의 판정일 때만 값이고, 아니면 「없다」다. 클로드가 적은 판정은 세지 않는다 —
+    그것은 내가_적은_판정() 이 따로 보인다."""
+    뿌리 = 뿌리찾기(p)
+    판정 = 항출처_읽기(p)
     줄목록, _앵커, _흐른것, _사라진 = 맞추기(p)
-    return [(이름, 절, 본문, 값) for 이름, 절, 본문, 값, _흐름 in 줄목록]
+    return [(이름, 절, 본문, 값만(판정.get(이름)) if 사람판정(뿌리, 이름, 판정.get(이름)) else "없다")
+            for 이름, 절, 본문, _값, _흐름 in 줄목록]
 
 
 def 앵커_고치기(p: Path) -> tuple[list, int]:
@@ -358,34 +385,178 @@ def 앵커_고치기(p: Path) -> tuple[list, int]:
 
 # --------------------------------------------------- 판정은 사람의 커밋에서 ----
 
-def 사람이_쓴_줄(뿌리: Path, 쪽: Path, 사람메일: list[str] | None = None) -> set[int]:
-    """그 파일에서 사람이 직접 커밋한 줄 번호. git blame 이 판정한다.
+# ------------------------------------------------------------- 사람 확인 ----
+# 왜 이렇게 하나 (2026-09-05). 판정을 사람이 커밋했는지를 저자 메일로 갈랐더니
+# `.git/config` 에 [user] 석 줄을 덧붙이는 것으로 뚫렸다 — 실측했다. 저자 메일은
+# 커밋하는 쪽이 정하는 값이라 근거가 못 된다. 근거가 되는 것은 **GitHub 이 웹 화면에서
+# 만든 커밋에 자기 키로 찍는 서명**이다. 작가의 진짜 판정 커밋은 전부 그것이었다.
+#
+# 확인하는 길이 둘이다. 키 파일이 있으면 컨테이너 안에서 git 이 서명을 검증한다.
+# 없으면 GitHub 의 레포 API 가 검증 결과(verified · committer)를 준다. 둘 다 안 되면
+# 사람 커밋으로 보지 않는다 — 확인 못 한 것을 받아 주면 이 대장은 아무것도 보장하지 못한다.
+#
+# 막지 못하는 것 하나를 적어 둔다. 이 세션이 GitHub 쓰기 토큰을 갖고 있으면, API 로
+# 만든 커밋도 GitHub 이 같은 키로 서명한다. 그 길은 도구 직전 검사(api.github.com 에
+# 쓰는 명령 거부)와 GitHub MCP 거부로만 막힌다. 사람의 컴퓨터에는 그 토큰이 없다.
 
-    판정을 클로드가 적을 수 있으면 이 대장은 아무것도 보장하지 못한다. 사람이 커밋한
-    줄은 커밋한 사람이 달라서 클로드의 줄과 기계적으로 갈린다.
+_사람커밋_캐시: dict[tuple[str, str], bool] = {}
+사람커밋_사유: dict[str, str] = {}
 
-    막지 못하는 것을 적어 둔다. 클로드가 사람 이름으로 커밋하면 뚫린다 — 그것은 부르는
-    레포의 훅이 도구 직전에 막아야 한다. 그리고 사람이 직접 커밋할 수 없는 자리(대화로만
-    한 판정)는 이 길로 못 들어온다. 그런 판정은 클로드가 적고 근거를 남기며, 세는 쪽이
-    「클로드가 적은 판정」으로 따로 세어 눈에 보이게 한다."""
+
+def 원격레포(뿌리: Path) -> str | None:
+    """origin 이 GitHub 이면 'owner/repo' 를 돌려준다."""
+    r = subprocess.run(["git", "-C", str(뿌리), "remote", "get-url", "origin"],
+                       capture_output=True, text=True)
+    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", r.stdout.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _서명키파일(뿌리: Path, 설정_: dict) -> Path | None:
+    후보 = []
+    if 설정_.get("서명키"):
+        후보.append(뿌리 / str(설정_["서명키"]))
+    후보.append(뿌리 / ".claude-ops" / "ops" / "keys" / "github-web-flow.asc")
+    후보.append(Path(__file__).resolve().parents[1] / "keys" / "github-web-flow.asc")
+    return next((c for c in 후보 if c.is_file()), None)
+
+
+def _오프라인검증(뿌리: Path, sha: str, 키파일: Path) -> bool | None:
+    """git 이 컨테이너 안에서 서명을 검증한다. 키를 못 읽으면 None."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="webflow-") as d:
+        os.chmod(d, 0o700)
+        env = dict(os.environ, GNUPGHOME=d)
+        i = subprocess.run(["gpg", "--batch", "--quiet", "--import", str(키파일)],
+                           env=env, capture_output=True, text=True)
+        if i.returncode != 0:
+            return None
+        r = subprocess.run(["git", "-C", str(뿌리), "log", "-1", "--format=%G?%n%GK", sha],
+                           env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            return False
+        상태, 키 = (r.stdout.split("\n") + ["", ""])[:2]
+        return 상태.strip() == "G" and 키.strip().upper()[-16:] in 웹플로우키
+
+
+def _온라인검증(뿌리: Path, sha: str) -> bool | None:
+    """GitHub 레포 API 가 준 검증 결과를 읽는다. 닿지 않으면 None."""
+    import json
+    import urllib.error
+    import urllib.request
+    레포 = 원격레포(뿌리)
+    if not 레포:
+        return None
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{레포}/commits/{sha}",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "claude-ops"})
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as f:
+            d = json.loads(f.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False          # 원격에 없는 커밋은 사람이 웹에서 만든 것이 아니다
+        return None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    c = d.get("commit") or {}
+    v = c.get("verification") or {}
+    return ((c.get("committer") or {}).get("email", "").lower() == 사람커밋자
+            and bool(v.get("verified")) and v.get("reason") == "valid")
+
+
+def 사람커밋(뿌리: Path, sha: str) -> bool:
+    """이 커밋을 사람이 만들었나. 설정의 사람확인 방식대로 가른다."""
+    키 = (str(뿌리), sha)
+    if 키 in _사람커밋_캐시:
+        return _사람커밋_캐시[키]
+    설정_ = 설정(뿌리)
+    r = subprocess.run(["git", "-C", str(뿌리), "log", "-1", "--format=%ae%n%ce", sha],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        _사람커밋_캐시[키] = False
+        사람커밋_사유[sha] = "그런 커밋이 없다"
+        return False
+    저자, 커밋자 = (l.strip().lower() for l in (r.stdout.split("\n") + ["", ""])[:2])
+    if 설정_["사람확인"] == "메일":
+        허용 = [m.lower() for m in 설정_["사람메일"]]
+        답 = (저자 in 허용) if 허용 else (클로드메일 not in 저자)
+        사람커밋_사유[sha] = "저자 메일로만 갈랐다 (사람확인: 메일)"
+    elif 커밋자 != 사람커밋자:
+        답 = False
+        사람커밋_사유[sha] = f"committer 가 {커밋자} — GitHub 웹 커밋이 아니다"
+    else:
+        키파일 = _서명키파일(뿌리, 설정_)
+        결과 = _오프라인검증(뿌리, sha, 키파일) if 키파일 else None
+        길 = "키 파일로 서명 검증"
+        if 결과 is None:
+            결과 = _온라인검증(뿌리, sha)
+            길 = "GitHub API 의 검증 결과"
+        if 결과 is None:
+            답 = False
+            사람커밋_사유[sha] = "검증할 길이 없다 — 키 파일도 없고 GitHub API 도 닿지 않는다. 받지 않는다"
+        else:
+            답 = bool(결과)
+            사람커밋_사유[sha] = f"{길}: {'확인됨' if 답 else '서명이 GitHub 것이 아니다'}"
+    _사람커밋_캐시[키] = 답
+    return 답
+
+
+def 사람이_쓴_줄_커밋(뿌리: Path, 쪽: Path) -> dict[int, str]:
+    """그 파일에서 사람이 커밋한 줄 번호 → 그 줄을 만든 커밋. git blame 이 판정한다."""
     if not 쪽.is_file():
-        return set()
+        return {}
     r = subprocess.run(["git", "blame", "--line-porcelain", "--", 상대(뿌리, 쪽)],
                        cwd=뿌리, capture_output=True, text=True)
     if r.returncode != 0:
-        return set()
-    허용 = [m.lower() for m in (사람메일 or [])]
-    나온것, 줄번호 = set(), 0
+        return {}
+    나온것: dict[int, str] = {}
     for l in r.stdout.splitlines():
-        m = re.match(r"^[0-9a-f]{7,40} \d+ (\d+)", l)
-        if m:
-            줄번호 = int(m.group(1))
-        elif l.startswith("author-mail "):
-            메일 = l[len("author-mail "):].strip().strip("<>").lower()
-            사람인가 = (메일 in 허용) if 허용 else (클로드메일 not in 메일)
-            if 사람인가:
-                나온것.add(줄번호)
+        m = re.match(r"^([0-9a-f]{40}) \d+ (\d+)", l)
+        if m and 사람커밋(뿌리, m.group(1)):
+            나온것[int(m.group(2))] = m.group(1)
     return 나온것
+
+
+def _커밋의파일(뿌리: Path, sha: str, 경로: str) -> str | None:
+    r = subprocess.run(["git", "-C", str(뿌리), "show", f"{sha}:{경로}"],
+                       capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def 사람판정(뿌리: Path, 이름: str, 칸) -> bool:
+    """사이드카의 한 칸이 사람의 판정인가.
+
+    사람의 판정은 {누가, 커밋} 이고, 그 커밋은 사람 커밋이며, 그 커밋의 검토 문서에
+    그 항의 그 값이 실제로 적혀 있다. 셋 중 하나라도 아니면 사람의 판정이 아니다 —
+    사이드카에 글자를 직접 써넣어 판정 수를 줄이던 길이 이것으로 막힌다 (2026-09-05 실측)."""
+    if not isinstance(칸, dict):
+        return False
+    sha, 값 = str(칸.get("커밋") or ""), str(칸.get("누가") or "")
+    if not sha or 값 not in 누가냈나 or 값 == "없다":
+        return False
+    if not 사람커밋(뿌리, sha):
+        return False
+    글 = _커밋의파일(뿌리, sha, 검토문서)
+    if not 글:
+        return False
+    m = re.search(r"<!--\s*항\s+" + re.escape(이름) + r"\s*-->.*?^누가:\s*(\S+)", 글, re.S | re.M)
+    return bool(m and m.group(1) == 값)
+
+
+def 뿌리찾기(p: Path) -> Path:
+    for d in [p.resolve().parent, *p.resolve().parents]:
+        if (d / 설정파일).is_file():
+            return d
+    return p.resolve().parent
+
+
+def 사람이_쓴_줄(뿌리: Path, 쪽: Path, 사람메일: list[str] | None = None) -> set[int]:
+    """그 파일에서 사람이 직접 커밋한 줄 번호. 사람커밋() 이 가른다. 사람메일 인자는
+    옛 호출을 위해 남겨 두었고 쓰지 않는다 — 어느 메일이 사람인지는 설정이 안다."""
+    return set(사람이_쓴_줄_커밋(뿌리, 쪽))
 
 
 # ------------------------------------------------------------- 일감 고르기 ----
@@ -516,7 +687,8 @@ def 검토문서_읽기(뿌리: Path) -> tuple[int, list, int]:
     if not 쪽.is_file():
         raise SystemExit(f"{검토문서} 가 없다. 먼저 만든다.")
     줄들 = 쪽.read_text(encoding="utf-8").splitlines()
-    사람줄 = 사람이_쓴_줄(뿌리, 쪽, 설정(뿌리)["사람메일"])
+    사람줄커밋 = 사람이_쓴_줄_커밋(뿌리, 쪽)
+    사람줄 = set(사람줄커밋)
 
     바뀐, 튄것, 클로드것 = 0, [], 0
     지금파일, 지금 , 앵커, 아는이름 = None, {}, {}, set()
@@ -557,7 +729,7 @@ def 검토문서_읽기(뿌리: Path) -> tuple[int, list, int]:
             if 지금.pop(이름, None) is not None:
                 바뀐 += 1
         elif 값만(지금.get(이름, "없다")) != 값:
-            지금[이름] = 값
+            지금[이름] = {"누가": 값, "커밋": 사람줄커밋[i]}
             바뀐 += 1
         이름 = None
     닫기()
