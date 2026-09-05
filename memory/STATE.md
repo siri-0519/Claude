@@ -11,12 +11,12 @@
 - 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기 — ops/rules/soft.md의 SR-001~005는 시드값입니다. vault/는 아직 비어 있고 ADR 1건뿐.
 
 **최근 로그**
+- `2026-09-05` work: git hooks now live in a tracked .githooks/ directory
 - `2026-09-05` work: answer-level hooks are detected by content, not by name
 - `2026-09-05` work: one item is now one thing a person can judge on its own
 - `2026-09-04` work: the router now finds the parent directory from inside a submodule
 - `2026-09-04` work: 판정을 일감 단위로 좁힐 수 있게 했다
 - `2026-09-04` work: 항에 안 바뀌는 이름을 붙였다 — 본문을 고쳐도 판정이 남는다
-- `2026-09-04` decision: 누가 냈나 — 레포끼리 나눠 쓰는 기계를 여기에 두었다
 
 더 보려면: `ops/bin/ops ctx log -n 30` / `ops/bin/ops ctx log --grep 키워드`
 <!-- END GENERATED: auto -->

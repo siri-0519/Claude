@@ -302,6 +302,19 @@ _before = (_W / ".claude/settings.json").read_text(encoding="utf-8")
 _hooks.설치(_W, REAL / "ops/bin/ops")
 ok("installing twice changes nothing",
    (_W / ".claude/settings.json").read_text(encoding="utf-8") == _before)
+_gp = _A / ".claude/hooks/git-pre-commit.sh"
+_gp.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); _gp.chmod(0o755)
+_r1 = _hooks.git훅설치(_A)
+_hp = subprocess.run(["git", "-C", str(_A), "config", "--get", "core.hooksPath"],
+                     capture_output=True, text=True).stdout.strip()
+ok("the git hook is installed in a tracked .githooks/ directory",
+   (_A / ".githooks/pre-commit").is_symlink() and "깔았다" in _r1, _r1)
+ok("core.hooksPath points at it, so git actually runs it",
+   _hp == ".githooks", _hp)
+ok("git resolves the hooks dir to the tracked one",
+   subprocess.run(["git", "-C", str(_A), "rev-parse", "--git-path", "hooks"],
+                  capture_output=True, text=True).stdout.strip() == ".githooks")
+ok("installing the git hook twice changes nothing", _hooks.git훅설치(_A) == "이미 깔려 있다")
 shutil.rmtree(_W, ignore_errors=True)
 
 
