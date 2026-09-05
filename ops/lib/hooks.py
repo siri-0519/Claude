@@ -180,27 +180,33 @@ def 설정짓기(위: Path, ops: Path) -> dict:
 # -------------------------------------------------------------------- 설치 ----
 
 def git훅설치(뿌리: Path) -> str:
-    """레포의 git pre-commit 훅을 추적되는 자리(.githooks/)에 잇고 core.hooksPath 를 잡는다.
+    """레포의 git 훅들을 추적되는 자리(.githooks/)에 잇고 core.hooksPath 를 잡는다.
+
+    .claude/hooks/git-<이름>.sh 마다 .githooks/<이름> 을 잇는다 — pre-commit(커밋 게이트),
+    pre-push(이력 재작성·원격 삭제 막기) 등. 스크립트가 없는 훅은 잇지 않는다.
 
     처음엔 .git/hooks/ 에 이었다. 거기는 추적되지 않아 컨테이너가 바뀌면 사라졌고,
     hooksPath 를 쓰는 레포에서는 아예 무시됐다 (2026-09-05). .githooks/ 는 레포에
     추적되어 클론에도 남는다. core.hooksPath 는 로컬 설정이라 세션 시작 훅이 매번
     다시 잡는다 — 그래서 여기서도 잡고, 세션 시작 스크립트에서도 잡는다."""
-    src = 뿌리 / ".claude/hooks/git-pre-commit.sh"
-    if not src.is_file():
-        return "없다 — .claude/hooks/git-pre-commit.sh 가 이 레포에 없다"
     if not (뿌리 / ".git").exists():
         return "없다 — git 레포가 아니다"
+    스크립트들 = sorted((뿌리 / ".claude/hooks").glob("git-*.sh"))
+    if not 스크립트들:
+        return "없다 — .claude/hooks/git-*.sh 가 이 레포에 없다"
     d = 뿌리 / ".githooks"
     d.mkdir(exist_ok=True)
-    tgt = d / "pre-commit"
-    want = os.path.relpath(src, d)
     한것 = []
-    if not (tgt.is_symlink() and os.readlink(tgt) == want):
+    for src in 스크립트들:
+        이름 = src.name[len("git-"):-len(".sh")]
+        tgt = d / 이름
+        want = os.path.relpath(src, d)
+        if tgt.is_symlink() and os.readlink(tgt) == want:
+            continue
         if tgt.exists() or tgt.is_symlink():
             tgt.unlink()
         tgt.symlink_to(want)
-        한것.append("pre-commit 을 .githooks/ 에 이음")
+        한것.append(f"{이름} 이음")
     지금 = subprocess.run(["git", "-C", str(뿌리), "config", "--get", "core.hooksPath"],
                         capture_output=True, text=True).stdout.strip()
     if 지금 != ".githooks":

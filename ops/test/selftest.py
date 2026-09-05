@@ -304,7 +304,11 @@ ok("installing twice changes nothing",
    (_W / ".claude/settings.json").read_text(encoding="utf-8") == _before)
 _gp = _A / ".claude/hooks/git-pre-commit.sh"
 _gp.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); _gp.chmod(0o755)
+_gq = _A / ".claude/hooks/git-pre-push.sh"
+_gq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); _gq.chmod(0o755)
 _r1 = _hooks.git훅설치(_A)
+ok("every git-*.sh script gets its own tracked hook — pre-push too",
+   (_A / ".githooks/pre-push").is_symlink() and os.readlink(_A / ".githooks/pre-push").endswith("git-pre-push.sh"))
 _hp = subprocess.run(["git", "-C", str(_A), "config", "--get", "core.hooksPath"],
                      capture_output=True, text=True).stdout.strip()
 ok("the git hook is installed in a tracked .githooks/ directory",
