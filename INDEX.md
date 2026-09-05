@@ -4,11 +4,13 @@
 > This is the map: find what you need here, then open only that file.
 > Narrower queries: `ops/bin/ops find --label X --kind Y --text Z`.
 
-**1 artifacts · 0 derivation edges**
+**3 artifacts · 1 derivation edges**
 
-## code (0) — Source code and scripts that are the product, not the tooling.
+## code (1) — Source code and scripts that are the product, not the tooling.
 
-_(none)_
+| id                | path                                  | labels                 | summary                                                                           | derives_from      |
+|-------------------|---------------------------------------|------------------------|-----------------------------------------------------------------------------------|-------------------|
+| C-20260905-5bff4e | vault/code/n8n-gitlab-mr-webhook.json | n8n,gitlab,slack,ci,웹훅 | 1분 폴링을 GitLab 웹훅(merge_request + pipeline)으로 교체한 판. 닫지 않은 MR에 새 커밋이 올라와도 다시 작동한다. | X-20260905-69ec7e |
 
 ## doc (0) — Structured prose meant to be read as-is: specs, guides, reports.
 
@@ -22,9 +24,11 @@ _(none)_
 
 _(none)_
 
-## raw (0) — Unstructured drop-in. Labels are mandatory in practice; shape is not.
+## raw (1) — Unstructured drop-in. Labels are mandatory in practice; shape is not.
 
-_(none)_
+| id                | path                                                | labels                 | summary                                                      | derives_from |
+|-------------------|-----------------------------------------------------|------------------------|--------------------------------------------------------------|--------------|
+| X-20260905-69ec7e | vault/inbox/n8n-gitlab-pipeline-notify-polling.json | n8n,gitlab,slack,ci,폴링 | 웹훅 전환 이전의 n8n 워크플로 내보내기. 1분 스케줄로 세 저장소의 success 파이프라인을 훑던 판. | —            |
 
 ## decision (1) — An ADR. Why a choice was made, and what it binds.
 

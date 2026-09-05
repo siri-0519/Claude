@@ -1,0 +1,642 @@
+{
+  "name": "GitLab 파이프라인 통과 알림 (1분 폴링 · 최현민 DM)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## GitLab 파이프라인 통과 → 최현민 DM (1분 폴링)\n\n**무엇**: 1분마다 mrb/core · analysis · frontend의 최근 10분 통과(success) 파이프라인을 GitLab API로 읽어, 처음 보는 것만 최현민에게 DM 한 통. 웹훅 등록 권한(Maintainer)이 없어 폴링으로 간다.\n\n**자격증명**: GitLab API `jjiu_gitlab`(최현민 개인 액세스 토큰, 범위 `read_api`)과 Slack `Slack (디멘필 봇)`이 노드에 **이미 지정되어 있다** — 가져온 뒤 고를 것이 없다. 자격증명을 다시 만들면 번호가 달라져 노드에서 다시 골라야 한다.\n\n**본 것 기억**: 워크플로 정적 데이터에 6시간. 발행(Publish)된 상태에서만 저장되므로 수동 실행으로 시험하면 매번 다시 보낸다.\n\n**출처**: demenpil-os-docs/보고서/n8n-gitlab-알림 (build-폴링과요약.js). 2026-09-02.",
+        "height": 400,
+        "width": 640,
+        "color": 5
+      },
+      "id": "7b290e42-0891-4240-8931-07fec91c5305",
+      "name": "이 워크플로는 무엇인가",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * * *"
+            }
+          ]
+        }
+      },
+      "id": "590d39ba-4948-49bf-a264-dc136cef5887",
+      "name": "매분",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 감시할 저장소 세 곳을 한 항목씩 내보낸다. since = 지금 - 10분.\n// 10분을 넉넉히 잡는 이유: n8n이 잠깐 멈췄다 돌아와도 놓치지 않게 하려는 것. 중복은 다음 노드가 걸러낸다.\nconst PROJECTS = ['demenpil-inc/mrb/core', 'demenpil-inc/mrb/analysis', 'demenpil-inc/mrb/frontend'];\nconst since = new Date(Date.now() - 10 * 60 * 1000).toISOString();\nreturn PROJECTS.map((p) => ({ json: { project: p, enc: encodeURIComponent(p), since } }));\n"
+      },
+      "id": "af854e8d-275b-4295-9da4-f9a5c11a89eb",
+      "name": "대상 저장소",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.com/api/v4/projects/{{ $json.enc }}/pipelines",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "updated_after",
+              "value": "={{ $json.since }}"
+            },
+            {
+              "name": "order_by",
+              "value": "updated_at"
+            },
+            {
+              "name": "sort",
+              "value": "desc"
+            },
+            {
+              "name": "per_page",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "e994f59b-a6e8-41ab-82cf-6065f23c1b30",
+      "name": "통과 파이프라인 조회",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        512
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// GitLab이 돌려준 통과(success) 파이프라인 중 처음 보는 것만 남긴다.\n// 본 것은 워크플로 정적 데이터(발행된 워크플로에서만 유지됨)에 6시간 보관한다.\nconst store = $getWorkflowStaticData('global');\nstore.seenPipelines = store.seenPipelines || {};\nconst now = Date.now();\nfor (const k of Object.keys(store.seenPipelines)) {\n  if (now - store.seenPipelines[k] > 6 * 60 * 60 * 1000) delete store.seenPipelines[k];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const p = item.json || {};\n  if (p.error || !p.id || !p.web_url) continue;          // 조회 실패 항목·빈 항목\n  if (p.status !== 'success') continue;                   // API 필터가 있어도 한 번 더 확인\n  const key = String(p.web_url);\n  if (store.seenPipelines[key]) continue;                 // 이미 알린 것\n  store.seenPipelines[key] = now;\n\n  const m = /^https?:\\/\\/[^/]+\\/(.+?)\\/-\\/pipelines\\/(\\d+)/.exec(p.web_url);\n  const project = m ? m[1] : (p.project_id !== undefined ? String(p.project_id) : '');\n  const mr = /^refs\\/merge-requests\\/(\\d+)\\//.exec(p.ref || '');\n  out.push({ json: {\n    project, enc: encodeURIComponent(project),\n    pipeline_id: p.id, pipeline_iid: p.iid, ref: p.ref, sha: p.sha, source: p.source,\n    web_url: p.web_url, updated_at: p.updated_at,\n    is_mr: !!mr, mr_iid: mr ? Number(mr[1]) : null,\n  } });\n}\nreturn out;\n"
+      },
+      "id": "b55cb794-e562-4b25-b93d-41f608adc0ee",
+      "name": "새 것 고르기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.com/api/v4/projects/{{ $json.enc }}/pipelines/{{ $json.pipeline_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "14512edc-ee73-4809-b07e-a135a6b56fdc",
+      "name": "자세히",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1184,
+        512
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              },
+              "leftValue": "={{ $json.ref }}",
+              "rightValue": "refs/merge-requests/"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "94b503d7-2106-417b-a1b4-a9d5777b0954",
+      "name": "MR 파이프라인인가",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1408,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.com/api/v4/projects/{{ $('새 것 고르기').item.json.enc }}/merge_requests/{{ $('새 것 고르기').item.json.mr_iid }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "17789de6-aaba-4b21-92cc-78cd9250c2c7",
+      "name": "MR 정보",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1632,
+        448
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// MR 파이프라인의 DM 문안. 파이프라인 상세는 「자세히」 노드에서, MR 정보는 이 노드 입력($json)에서 온다.\nfunction esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nfunction dur(sec) {\n  if (sec === null || sec === undefined || isNaN(Number(sec))) return '소요 시간 미상';\n  const s = Math.round(Number(sec)); const m = Math.floor(s / 60); const r = s % 60;\n  return m ? `${m}분 ${String(r).padStart(2, '0')}초` : `${r}초`;\n}\n\nconst a = $('자세히').item.json || {};\nconst mr = $json || {};\nconst m = /^https?:\\/\\/[^/]+\\/(.+?)\\/-\\/pipelines\\/\\d+/.exec(a.web_url || '');\nconst repo = m ? m[1] : '(저장소 미상)';\nconst who = a.user && a.user.name ? `${esc(a.user.name)}(${esc(a.user.username || '')})` : '(실행자 미상)';\nconst no = a.iid ?? a.id ?? '';\nconst pipe = a.web_url ? `<${a.web_url}|파이프라인 #${no}>` : `파이프라인 #${no}`;\n\nconst lines = [`*파이프라인 통과* — ${esc(repo)}`];\nif (mr.web_url && mr.iid && !mr.error) {\n  lines.push(`MR <${mr.web_url}|!${mr.iid}> ${esc(mr.title)}`);\n  lines.push(`${esc(mr.source_branch)} → ${esc(mr.target_branch)} · ${who}`);\n} else {\n  const iid = (/^refs\\/merge-requests\\/(\\d+)\\//.exec(a.ref || '') || [])[1];\n  lines.push(`MR !${iid || '?'} (MR 정보를 못 읽음) · ${who}`);\n}\nlines.push(`${dur(a.duration)} · ${pipe}`);\n\nreturn { json: { text: lines.join('\\n'), repo, pipeline_id: a.id, pipeline_url: a.web_url, mr_iid: mr.iid || null, mr_url: mr.web_url || null } };\n"
+      },
+      "id": "69c78a26-4c57-4bda-9c19-431f5f520d06",
+      "name": "문안(MR)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// MR이 아닌 파이프라인(main 병합 뒤 · 태그)의 DM 문안. 입력($json)은 파이프라인 상세.\nfunction esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nfunction dur(sec) {\n  if (sec === null || sec === undefined || isNaN(Number(sec))) return '소요 시간 미상';\n  const s = Math.round(Number(sec)); const m = Math.floor(s / 60); const r = s % 60;\n  return m ? `${m}분 ${String(r).padStart(2, '0')}초` : `${r}초`;\n}\n\nconst a = $json || {};\nconst m = /^https?:\\/\\/[^/]+\\/(.+?)\\/-\\/pipelines\\/\\d+/.exec(a.web_url || '');\nconst repo = m ? m[1] : '(저장소 미상)';\nconst who = a.user && a.user.name ? `${esc(a.user.name)}(${esc(a.user.username || '')})` : '(실행자 미상)';\nconst no = a.iid ?? a.id ?? '';\nconst pipe = a.web_url ? `<${a.web_url}|파이프라인 #${no}>` : `파이프라인 #${no}`;\n// 세 저장소의 기본 브랜치는 전부 main(.gitlab-ci.yml 실독, 2026-09-02).\nconst where = a.tag\n  ? `태그 \\`${esc(a.ref)}\\` (릴리스 파이프라인)`\n  : a.ref === 'main'\n    ? `기본 브랜치 \\`${esc(a.ref)}\\` (병합 뒤 파이프라인)`\n    : `브랜치 \\`${esc(a.ref)}\\``;\n\nconst lines = [`*파이프라인 통과* — ${esc(repo)}`, `${where} · ${who}`, `${dur(a.duration)} · ${pipe}`];\nreturn { json: { text: lines.join('\\n'), repo, pipeline_id: a.id, pipeline_url: a.web_url, ref: a.ref } };\n"
+      },
+      "id": "abc25aa7-5d5d-488a-9868-789c0cf92060",
+      "name": "문안(브랜치)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3056,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: \"U0AR3RA5EN8\", text: $json.text, unfurl_links: false, unfurl_media: false }) }}",
+        "options": {}
+      },
+      "id": "33d9f635-3d9f-4977-8991-fb8e5adc2fa9",
+      "name": "최현민에게 DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        464
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3q4nnQD1l7hiJnRZ",
+          "name": "Slack (디멘필 봇)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.com/api/v4/projects/{{ $('새 것 고르기').item.json.enc }}/merge_requests/{{ $('새 것 고르기').item.json.mr_iid }}/changes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "99ace100-cb84-4faf-8546-f73a63a75714",
+      "name": "MR 변경파일 조회",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        448
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 조건부 봇 승인 판정 — 객관적으로 확인 가능한 것만 본다.\n// 하나라도 걸리면 자동승인하지 않고 사람에게 넘긴다.\nconst DEP = [\n  /(^|\\/)(package\\.json|package-lock\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml)$/i,\n  /(^|\\/)(pyproject\\.toml|uv\\.lock|poetry\\.lock|Pipfile(\\.lock)?|setup\\.(cfg|py)|requirements[^\\/]*\\.txt)$/i,\n  /(^|\\/)(build\\.gradle(\\.kts)?|settings\\.gradle(\\.kts)?|gradle\\.properties|libs\\.versions\\.toml|gradle-wrapper\\.properties)$/i,\n  /(^|\\/)Dockerfile[^\\/]*$/i,\n  /(^|\\/)docker-compose[^\\/]*\\.ya?ml$/i,\n  /(^|\\/)\\.gitlab-ci\\.yml$/i,\n  /(^|\\/)\\.trivyignore$/i,\n  /(^|\\/)\\.nvmrc$/i,\n  /(^|\\/)\\.pre-commit-config\\.ya?ml$/i,\n  /(^|\\/)(ci|docker|gradle)\\//i\n];\n\nconst src  = $('새 것 고르기').item.json || {};\nconst mr   = $('MR 정보').item.json || {};\nconst base = $('문안(MR)').item.json || {};\nconst changes = ($json && Array.isArray($json.changes)) ? $json.changes : [];\n\nconst paths = [];\nfor (const c of changes) {\n  if (c.new_path) paths.push(c.new_path);\n  if (c.old_path && c.old_path !== c.new_path) paths.push(c.old_path);\n}\nconst hits = [...new Set(paths.filter(p => DEP.some(re => re.test(p))))];\n\nconst blockers = [];\nif (hits.length) blockers.push('의존성·빌드·CI 파일 변경 (' + hits.join(', ') + ')');\nif (mr.draft === true || /^\\s*(draft|wip)\\s*:/i.test(String(mr.title || ''))) blockers.push('초안(Draft) 상태');\nif (mr.has_conflicts === true) blockers.push('병합 충돌 있음');\nif (mr.blocking_discussions_resolved === false) blockers.push('미해결 토론 있음');\nif (mr.state && mr.state !== 'opened') blockers.push('열린 MR이 아님 (' + mr.state + ')');\nif (!changes.length) blockers.push('변경 파일 목록을 읽지 못함');\n\nconst auto_ok = blockers.length === 0;\n\nconst checked = [\n  '파이프라인 통과',\n  '의존성·빌드·CI 파일 무변경 (' + paths.length + '개 파일 확인)',\n  '초안 아님',\n  '병합 충돌 없음',\n  '미해결 토론 없음'\n];\n\nconst approve_comment =\n  '[봇 자동승인 — 조건부]\\n\\n' +\n  '이 승인은 사람의 보안 검토가 아닙니다. 아래 객관적 조건을 자동으로 확인한 결과입니다.\\n' +\n  checked.map(function (c) { return '· ' + c; }).join('\\n') + '\\n\\n' +\n  '의존성·빌드·CI 파일이 바뀌었거나 위 조건 중 하나라도 걸리면 자동승인하지 않고 사람에게 넘깁니다.\\n' +\n  '외부 라이브러리(SOUP) 취약점 판정이 필요한 변경은 이 경로로 승인되지 않습니다.';\n\nconst line = auto_ok\n  ? '\\n\\n[조건 충족 — 봇 자동승인 대상]\\n· 확인: ' + checked.join(' / ')\n  : '\\n\\n[사람 확인 필요]\\n· 걸린 것: ' + blockers.join(' / ');\n\nreturn { json: Object.assign({}, base, {\n  text: String(base.text || '') + line,\n  auto_ok: auto_ok,\n  blockers: blockers,\n  checked_conditions: checked,\n  approve_comment: approve_comment,\n  changed_paths: paths,\n  dep_hits: hits,\n  enc: src.enc,\n  mr_iid: src.mr_iid,\n  project: src.project\n}) };\n"
+      },
+      "id": "690447b5-2694-4d67-b134-dc89c5eb014f",
+      "name": "승인 조건 판정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2304,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "auto1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.auto_ok }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "500d9079-9cd7-4c34-8fd6-dfecfa079f9f",
+      "name": "조건 충족?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2528,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 조건부 봇 승인 — 켜기 전에 읽을 것\n\n이 갈래는 아직 아무것도 승인하지 않는다. 「봇 승인」·「승인 댓글」 두 노드가 꺼져 있고 자격증명도 안 붙어 있다.\n\n**켜려면 Maintainer(박민기·안근회·정운평)가 두 가지를 해줘야 한다.**\n1. 봇 전용 프로젝트 액세스 토큰 발급 — 최현민은 Developer라 직접 못 만든다.\n2. 그 봇을 core·frontend의 승인 규칙 「승인자 (Approver)」에 추가 — 지금 자격자는 jjiu037·wpjung 2인뿐이라, 추가하지 않으면 봇이 승인해도 필요 승인 1건이 안 채워진다.\n\n**jjiu_gitlab(최현민 개인 토큰)을 이 두 노드에 붙이지 말 것.** 붙이면 사람이 보지 않은 보안 검토를 최현민이 한 것으로 기록된다. 이 갈래를 만든 이유가 바로 그것을 피하려는 것이다.\n\n**자동승인 조건(전부 충족해야 대상)**\n파이프라인 통과 / 의존성·빌드·CI 파일 무변경 / 초안 아님 / 병합 충돌 없음 / 미해결 토론 없음\n\n하나라도 걸리면 승인하지 않고 DM으로 사람에게 넘긴다. analysis 저장소는 승인 규칙 자체가 없어 해당 없음.",
+        "height": 560,
+        "width": 520,
+        "color": 4
+      },
+      "id": "8f90fbd5-a8cd-4018-a4a5-49cde328cd43",
+      "name": "조건부 봇 승인 안내",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gitlab.com/api/v4/projects/{{ $('승인 조건 판정').item.json.enc }}/merge_requests/{{ $('승인 조건 판정').item.json.mr_iid }}/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $('승인 조건 판정').item.json.approve_comment }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "b9411439-0994-415a-9817-dc89344be89d",
+      "name": "승인 댓글",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3168,
+        256
+      ],
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://gitlab.com/api/v4/projects/{{ $json.enc }}/merge_requests/{{ $json.mr_iid }}/approve",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "58aab228-98dd-4be1-8f1f-de5f7e12a3d4",
+      "name": "승인",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        256
+      ],
+      "credentials": {
+        "gitlabApi": {
+          "id": "N8BVFiIw6xsHmulX",
+          "name": "jjiu_gitlab"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.floor(Math.random() * (360 - 20 + 1) + 20) }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2736,
+        256
+      ],
+      "id": "a97da418-953b-4630-9b40-760e51464526",
+      "name": "20초~6분 랜덤 대기",
+      "webhookId": "7c2cc65f-4340-4702-b44b-c94fe64cb2fb"
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.floor(Math.random() * (10 - 2 + 1) + 2) }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3024,
+        256
+      ],
+      "id": "9aaf1dc2-33e0-41cb-8726-20568236ff54",
+      "name": "2초에서 10초 랜덤 지연",
+      "webhookId": "657f04f3-d648-47fc-84c2-7a88a758cc13"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "매분": {
+      "main": [
+        [
+          {
+            "node": "대상 저장소",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "대상 저장소": {
+      "main": [
+        [
+          {
+            "node": "통과 파이프라인 조회",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "통과 파이프라인 조회": {
+      "main": [
+        [
+          {
+            "node": "새 것 고르기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 것 고르기": {
+      "main": [
+        [
+          {
+            "node": "자세히",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "자세히": {
+      "main": [
+        [
+          {
+            "node": "MR 파이프라인인가",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MR 파이프라인인가": {
+      "main": [
+        [
+          {
+            "node": "MR 정보",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "문안(브랜치)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MR 정보": {
+      "main": [
+        [
+          {
+            "node": "문안(MR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "문안(MR)": {
+      "main": [
+        [
+          {
+            "node": "MR 변경파일 조회",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "문안(브랜치)": {
+      "main": [
+        [
+          {
+            "node": "최현민에게 DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MR 변경파일 조회": {
+      "main": [
+        [
+          {
+            "node": "승인 조건 판정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인 조건 판정": {
+      "main": [
+        [
+          {
+            "node": "조건 충족?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "조건 충족?": {
+      "main": [
+        [
+          {
+            "node": "20초~6분 랜덤 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "최현민에게 DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인 댓글": {
+      "main": [
+        [
+          {
+            "node": "최현민에게 DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인": {
+      "main": [
+        [
+          {
+            "node": "2초에서 10초 랜덤 지연",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20초~6분 랜덤 대기": {
+      "main": [
+        [
+          {
+            "node": "승인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2초에서 10초 랜덤 지연": {
+      "main": [
+        [
+          {
+            "node": "승인 댓글",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "be3d7a14-9055-4e13-8ba3-55b6fadd54d8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "97b4b6b148c5e5c184b2b99f210083f8d08f632ddf717d3583f2c06cf50ab971"
+  },
+  "id": "fqPuUB14M4Cg08Qq",
+  "tags": []
+}
