@@ -246,6 +246,7 @@ print("\n[router] hooks survive a session opened above the repos")
 
 sys.path.insert(0, str(REAL / "ops/lib"))
 import hooks as _hooks
+import origin  # noqa: E402
 
 _W = Path(tempfile.mkdtemp(prefix="router-"))
 _A, _B = _W / "alpha", _W / "beta"
@@ -302,6 +303,51 @@ _hooks.설치(_W, REAL / "ops/bin/ops")
 ok("installing twice changes nothing",
    (_W / ".claude/settings.json").read_text(encoding="utf-8") == _before)
 shutil.rmtree(_W, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+print("\n[items] one item is one thing a person can judge on its own")
+# 작가가 판정 문서를 읽고 셋을 짚었다 (2026-09-04) — 표 문법이 그대로 박히고,
+# 코드 울이 다른 항에 섞여 들어가고, 문단이 문장 한가운데서 끊겼다.
+
+_글 = "\n".join([
+    "# 최연", "",
+    "> 정본이다. 1~3루프는 최연이고 4루프부터 최연아다.", "",
+    "## 1. 본문이 틀리면 안 되는 것", "",
+    "| | |", "|---|---|",
+    "| 몸 | TS다. 23세, 157cm. |",
+    "| MBTI | INTP다 |", "",
+    "## 2. 카드", "",
+    "```",
+    "신체 : 157cm",
+    "성별 : 여성",
+    "```", "",
+    "## 3. 사람됨", "",
+    "**사람은 모두 평범하면서 특별하다.** 어떤 범주에 속한다는 것은",
+    "배역이 있다는 것이고, 특별함조차 하나의 배역이다.", "",
+])
+_항 = _hooks and origin.항들(_글)
+_본문 = [b for _, b in _항]
+
+ok("a fenced block is one item, not scattered lines",
+   sum(1 for b in _본문 if b.startswith("```")) == 1
+   and "신체 : 157cm" in [b for b in _본문 if b.startswith("```")][0],
+   f"{len(_본문)} items")
+ok("no item is left holding a stray fence",
+   not any(b.rstrip().endswith("```") and not b.startswith("```") for b in _본문))
+ok("a paragraph opening in bold is not cut into a bullet",
+   any("특별함조차 하나의 배역이다." in b and "사람은 모두" in b for b in _본문),
+   str(_본문[-1])[:80])
+ok("a table row keeps its label and drops the pipes",
+   origin.보기좋게("| 몸 | TS다. 23세, 157cm. |") == ("몸", "TS다. 23세, 157cm."),
+   str(origin.보기좋게("| 몸 | TS다. 23세, 157cm. |")))
+ok("a plain paragraph has no label",
+   origin.보기좋게("INTP다") == ("", "INTP다"))
+ok("sections are named, not just numbered",
+   origin.절이름들(_글) == {1: "1. 본문이 틀리면 안 되는 것", 2: "2. 카드", 3: "3. 사람됨"},
+   str(origin.절이름들(_글)))
+ok("the file's own preamble comes along, so an item reads in context",
+   "4루프부터 최연아다" in origin.머리말(_글), origin.머리말(_글)[:60])
 
 
 print(f"\n{PASSED} passed, {len(FAILED)} failed")

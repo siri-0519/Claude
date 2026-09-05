@@ -93,12 +93,23 @@ def 상대(뿌리: Path, p: Path) -> str:
 
 # ------------------------------------------------------------- 항 가르기 ----
 
+# 불릿은 표시 뒤에 빈칸이 온다. 표시만 보고 가르던 때는 **굵은 글씨**로 시작하는
+# 문단이 불릿으로 잘려서, 그 문단이 문장 한가운데서 뚝 끊겼다 (2026-09-04에 고쳤다).
+불릿꼴 = re.compile(r"^([-*+]\s|\d+\.\s)")
+표행꼴 = re.compile(r"^\|.*\|$")
+울꼴 = re.compile(r"^(```|~~~)")
+
+
 def 항들(글: str) -> list[tuple[int, str]]:
-    """문서를 항으로 가른다. 항은 불릿 한 줄 · 표 한 행 · 문단 하나다.
+    """문서를 항으로 가른다. 항은 불릿 한 줄 · 표 한 행 · 문단 하나 · 코드 울 하나다.
 
     머리와 빈 줄과 인용(>)과 표의 구분선은 항이 아니다. 절 번호는 `##` 를 셈해서
-    붙인다 — 항을 가리키는 열쇠의 절반이 그 번호다."""
+    붙인다 — 항을 가리키는 열쇠의 절반이 그 번호다.
+
+    코드 울(```) 안은 통째로 한 항이다. 울을 모르던 때는 울 안의 줄들이 문단과
+    불릿으로 흩어져서, 여는 울이 첫 줄에 붙고 닫는 울이 다른 항의 끝에 붙었다."""
     절, 결과, 문단 = 0, [], []
+    울 = None
 
     def 닫기():
         if 문단:
@@ -107,22 +118,84 @@ def 항들(글: str) -> list[tuple[int, str]]:
 
     for l in 글.splitlines():
         s = l.strip()
+        if 울 is not None:
+            울.append(l)
+            if 울꼴.match(s):
+                결과.append((절, "\n".join(울)))
+                울 = None
+            continue
         m = re.match(r"^(#+)\s", l)
         if m:
             닫기()
             if m.group(1) == "##":
                 절 += 1
             continue
+        if 울꼴.match(s):
+            닫기()
+            울 = [l]
+            continue
         if not s or s.startswith(">") or re.match(r"^\|[\s:|-]+\|$", s):
             닫기()
             continue
-        if s.startswith(("-", "*", "|")) or re.match(r"^\d+\.", s):
+        if 불릿꼴.match(s) or 표행꼴.match(s):
             닫기()
             결과.append((절, s))
         else:
             문단.append(s)
     닫기()
+    if 울:
+        결과.append((절, "\n".join(울)))
     return 결과
+
+
+def 절이름들(글: str) -> dict[int, str]:
+    """절 번호마다 그 절의 제목. 판정하는 사람에게 번호만 보이면 어느 절인지 모른다."""
+    번호, 이름 = 0, {}
+    울 = False
+    for l in 글.splitlines():
+        if 울꼴.match(l.strip()):
+            울 = not 울
+            continue
+        if 울:
+            continue
+        m = re.match(r"^##\s+(.*\S)\s*$", l)
+        if m:
+            번호 += 1
+            이름[번호] = m.group(1).strip()
+    return 이름
+
+
+def 머리말(글: str) -> str:
+    """H1 바로 뒤의 인용 덩이. 그 문서가 무엇인지를 말하므로, 항을 판정할 때 같이 읽는다."""
+    줄, 봤나, 모은것 = 글.splitlines(), False, []
+    for l in 줄:
+        s = l.strip()
+        if not 봤나:
+            봤나 = s.startswith("# ")
+            continue
+        if s.startswith(">"):
+            모은것.append(s.lstrip("> ").rstrip())
+        elif 모은것:
+            break
+        elif s:
+            break
+    return " ".join(모은것)
+
+
+def 보기좋게(본문: str) -> tuple[str, str]:
+    """(딱지, 읽을 몸). 표 한 행은 첫 칸이 딱지이고 나머지가 몸이다.
+
+    표 행을 원문 그대로 내면 `| 몸 | ... |` 처럼 표 문법이 그대로 박힌다. 판정하는
+    사람에게는 그 세로줄이 아무 뜻도 없다 (작가 2026-09-04)."""
+    s = 본문.strip()
+    if 표행꼴.match(s) and "\n" not in s:
+        칸 = [c.strip() for c in re.split(r"(?<!\\)\|", s)[1:-1]]
+        칸 = [c for c in 칸 if c]
+        if len(칸) >= 2:
+            return 칸[0], " · ".join(칸[1:])
+        if len(칸) == 1:
+            return "", 칸[0]
+    return "", s
 
 
 def 앞머리(본문: str) -> str:
@@ -410,10 +483,23 @@ def 검토문서_만들기(뿌리: Path, 대상들: list, 제목: str = "", 몇�
         쓸것 = 골 if 남은 is None else 골[:남은]
         if 남은 is not None:
             남은 -= len(쓸것)
+        원글 = p.read_text(encoding="utf-8")
+        절이름 = 절이름들(원글)
         글 += [f"## {상대(뿌리, p)}", ""]
+        머리 = 머리말(원글)
+        if 머리:
+            글 += [f"> {머리}", ""]
+        지난절 = None
         for 이름, 절, 본문, 값, 흐름 in 쓸것:
-            머리 = f"### [{이름}] {절}절" + ("  — 본문이 바뀌었다" if 흐름 else "")
-            글 += [머리, "", 본문, "", f"누가: {값}", ""]
+            if 절 != 지난절:
+                글 += [f"### {절이름.get(절, str(절) + '절')}", ""]
+                지난절 = 절
+            딱지, 몸 = 보기좋게(본문)
+            if 딱지:
+                글.append(f"#### {딱지}" + ("  — 본문이 바뀌었다" if 흐름 else ""))
+            elif 흐름:
+                글.append("#### 본문이 바뀌었다")
+            글 += [f"<!-- 항 {이름} -->", "", 몸, "", f"누가: {값}", ""]
             담은 += 1
         _줄, 앵커, _흐른것, _사라진 = 맞추기(p)
         쓰기(p, 항출처_읽기(p), 앵커)     # 이름을 지금 본문에 묶어 둔다
@@ -453,7 +539,7 @@ def 검토문서_읽기(뿌리: Path) -> tuple[int, list, int]:
             지금 = 항출처_읽기(지금파일)
             아는이름 = {x[0] for x in 줄목록}
             continue
-        m = re.match(r"^### \[([0-9a-f]{8})\]", l.strip())
+        m = re.match(r"^<!--\s*항\s+([0-9a-f]{8})\s*-->$", l.strip())
         if m:
             이름 = m.group(1)
             continue
