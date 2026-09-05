@@ -1,0 +1,13 @@
+id: X-20260905-69ec7e
+kind: raw
+title: n8n 워크플로 원본 — GitLab 파이프라인 통과 알림 (1분 폴링 · 최현민 DM)
+labels:
+- n8n
+- gitlab
+- slack
+- ci
+- 폴링
+summary: 웹훅 전환 이전의 n8n 워크플로 내보내기. 1분 스케줄로 세 저장소의 success 파이프라인을 훑던 판.
+status: superseded
+created: '2026-09-05'
+updated: '2026-09-05'

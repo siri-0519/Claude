@@ -1,0 +1,17 @@
+id: C-20260905-5bff4e
+kind: code
+title: n8n 워크플로 — GitLab MR·파이프라인 웹훅 → 최현민 DM
+labels:
+- n8n
+- gitlab
+- slack
+- ci
+- 웹훅
+summary: 1분 폴링을 GitLab 웹훅(merge_request + pipeline)으로 교체한 판. 닫지 않은 MR에 새 커밋이 올라와도
+  다시 작동한다.
+status: active
+created: '2026-09-05'
+updated: '2026-09-05'
+derives_from:
+- id: X-20260905-69ec7e
+  hash: sha256:8132ac6caa786546
