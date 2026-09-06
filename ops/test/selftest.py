@@ -239,6 +239,174 @@ for _ in range(4):
 ok("Stop gives up after the cap, so a session can never be trapped",
    d.get("decision") != "block", str(d)[:140])
 
+# ---------------------------------------------------------------------------
+print("\n[router] hooks survive a session opened above the repos")
+# 레포 위에서 세션이 열리면 어느 레포의 .claude/settings.json 도 안 읽힌다 (2026-09-04).
+# 위 디렉터리에 설정 하나를 걸고, 훅마다 guard 로 감싸 상관있는 레포만 돌린다.
+
+sys.path.insert(0, str(REAL / "ops/lib"))
+import hooks as _hooks
+import origin  # noqa: E402
+
+_W = Path(tempfile.mkdtemp(prefix="router-"))
+_A, _B = _W / "alpha", _W / "beta"
+for _r in (_A, _B):
+    (_r / ".claude/hooks").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(_r)], check=True)
+    (_r / ".claude/settings.json").write_text(json.dumps({"hooks": {
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+            "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/probe.sh pre_tool_use'}]}],
+        "Stop": [{"hooks": [{"type": "command",
+            "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/probe.sh stop'}]}],
+    }}), encoding="utf-8")
+    _p = _r / ".claude/hooks/probe.sh"
+    _p.write_text('#!/bin/sh\necho "돌았다 $CLAUDE_PROJECT_DIR"\n', encoding="utf-8")
+    _p.chmod(0o755)
+
+def _pay(**kw): return json.dumps(kw)
+
+def _guard(root, stage, payload):
+    return subprocess.run(
+        [sys.executable, str(REAL / "ops/bin/ops"), "guard", str(root), stage,
+         "--", f'{root}/.claude/hooks/probe.sh {stage}'],
+        input=payload, text=True, capture_output=True)
+
+_in_a = _pay(tool_input={"file_path": str(_A / "x.md")}, cwd=str(_W))
+ok("a call inside one repo runs that repo's hook",
+   "돌았다" in _guard(_A, "pre_tool_use", _in_a).stdout)
+ok("the same call stays silent in the other repo",
+   _guard(_B, "pre_tool_use", _in_a).stdout.strip() == "")
+ok("the hook is told which repo it is in",
+   str(_A) in _guard(_A, "pre_tool_use", _in_a).stdout)
+_in_cwd = _pay(tool_input={"command": "git status"}, cwd=str(_B))
+ok("with no path in the call, the cwd decides the repo",
+   "돌았다" in _guard(_B, "pre_tool_use", _in_cwd).stdout
+   and _guard(_A, "pre_tool_use", _in_cwd).stdout.strip() == "")
+ok("a call outside every repo runs nothing",
+   _guard(_A, "pre_tool_use", _pay(tool_input={"command": "echo hi"}, cwd="/tmp")).stdout.strip() == "")
+ok("the end of an answer has no path, so every repo runs",
+   "돌았다" in _guard(_A, "stop", _pay(cwd=str(_W))).stdout
+   and "돌았다" in _guard(_B, "stop", _pay(cwd=str(_W))).stdout)
+
+_gen = _hooks.설정짓기(_W, REAL / "ops/bin/ops")
+_names = [h["command"] for v in _gen["hooks"].values() for g in v for h in g["hooks"]]
+ok("the generated settings register both repos",
+   sum(str(_A) in c for c in _names) >= 2 and sum(str(_B) in c for c in _names) >= 2,
+   f"{len(_names)} entries")
+ok("nothing in the generated settings still says CLAUDE_PROJECT_DIR",
+   not any("CLAUDE_PROJECT_DIR" in c for c in _names))
+_hooks.설치(_W, REAL / "ops/bin/ops")
+ok("installing is what makes the settings file exist",
+   (_W / ".claude/settings.json").is_file())
+_before = (_W / ".claude/settings.json").read_text(encoding="utf-8")
+_hooks.설치(_W, REAL / "ops/bin/ops")
+ok("installing twice changes nothing",
+   (_W / ".claude/settings.json").read_text(encoding="utf-8") == _before)
+_gp = _A / ".claude/hooks/git-pre-commit.sh"
+_gp.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); _gp.chmod(0o755)
+_gq = _A / ".claude/hooks/git-pre-push.sh"
+_gq.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); _gq.chmod(0o755)
+_r1 = _hooks.git훅설치(_A)
+ok("every git-*.sh script gets its own tracked hook — pre-push too",
+   (_A / ".githooks/pre-push").is_symlink() and os.readlink(_A / ".githooks/pre-push").endswith("git-pre-push.sh"))
+_hp = subprocess.run(["git", "-C", str(_A), "config", "--get", "core.hooksPath"],
+                     capture_output=True, text=True).stdout.strip()
+ok("the git hook is installed in a tracked .githooks/ directory",
+   (_A / ".githooks/pre-commit").is_symlink() and "깔았다" in _r1, _r1)
+ok("core.hooksPath points at it, so git actually runs it",
+   _hp == ".githooks", _hp)
+ok("git resolves the hooks dir to the tracked one",
+   subprocess.run(["git", "-C", str(_A), "rev-parse", "--git-path", "hooks"],
+                  capture_output=True, text=True).stdout.strip() == ".githooks")
+ok("installing the git hook twice changes nothing", _hooks.git훅설치(_A) == "이미 깔려 있다")
+shutil.rmtree(_W, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+print("\n[items] one item is one thing a person can judge on its own")
+# 작가가 판정 문서를 읽고 셋을 짚었다 (2026-09-04) — 표 문법이 그대로 박히고,
+# 코드 울이 다른 항에 섞여 들어가고, 문단이 문장 한가운데서 끊겼다.
+
+_글 = "\n".join([
+    "# 최연", "",
+    "> 정본이다. 1~3루프는 최연이고 4루프부터 최연아다.", "",
+    "## 1. 본문이 틀리면 안 되는 것", "",
+    "| | |", "|---|---|",
+    "| 몸 | TS다. 23세, 157cm. |",
+    "| MBTI | INTP다 |", "",
+    "## 2. 카드", "",
+    "```",
+    "신체 : 157cm",
+    "성별 : 여성",
+    "```", "",
+    "## 3. 사람됨", "",
+    "**사람은 모두 평범하면서 특별하다.** 어떤 범주에 속한다는 것은",
+    "배역이 있다는 것이고, 특별함조차 하나의 배역이다.", "",
+])
+_항 = _hooks and origin.항들(_글)
+_본문 = [b for _, b in _항]
+
+ok("a fenced block is one item, not scattered lines",
+   sum(1 for b in _본문 if b.startswith("```")) == 1
+   and "신체 : 157cm" in [b for b in _본문 if b.startswith("```")][0],
+   f"{len(_본문)} items")
+ok("no item is left holding a stray fence",
+   not any(b.rstrip().endswith("```") and not b.startswith("```") for b in _본문))
+ok("a paragraph opening in bold is not cut into a bullet",
+   any("특별함조차 하나의 배역이다." in b and "사람은 모두" in b for b in _본문),
+   str(_본문[-1])[:80])
+ok("a table row keeps its label and drops the pipes",
+   origin.보기좋게("| 몸 | TS다. 23세, 157cm. |") == ("몸", "TS다. 23세, 157cm."),
+   str(origin.보기좋게("| 몸 | TS다. 23세, 157cm. |")))
+ok("a plain paragraph has no label",
+   origin.보기좋게("INTP다") == ("", "INTP다"))
+ok("sections are named, not just numbered",
+   origin.절이름들(_글) == {1: "1. 본문이 틀리면 안 되는 것", 2: "2. 카드", 3: "3. 사람됨"},
+   str(origin.절이름들(_글)))
+ok("the file's own preamble comes along, so an item reads in context",
+   "4루프부터 최연아다" in origin.머리말(_글), origin.머리말(_글)[:60])
+
+
+# ---------------------------------------------------------------------------
+print("\n[human] a judgement counts only when a human commit carries it")
+# 저자 메일로 갈랐더니 .git/config 에 [user] 를 덧붙이는 것으로 뚫렸고, 사이드카에
+# 글자를 직접 쓰는 것으로 판정 수가 줄었다 (2026-09-05 실측). 이제 판정은 {누가, 커밋}
+# 이고, 그 커밋이 사람 커밋이며, 그 커밋의 검토 문서에 그 값이 있어야 센다.
+
+_H = Path(tempfile.mkdtemp(prefix="human-"))
+subprocess.run(["git", "init", "-q", str(_H)], check=True)
+subprocess.run(["git", "-C", str(_H), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_H), "config", "user.name", "t"], check=True)
+(_H / ".origin.yml").write_text("문서:\n  - \"*.md\"\n사람확인: 메일\n사람메일:\n  - \"human@x\"\n", encoding="utf-8")
+(_H / "ORIGIN-REVIEW.md").write_text("# x\n\n<!-- 항 aaaaaaaa -->\n\n본문\n\n누가: 작가\n\n<!-- 항 bbbbbbbb -->\n\n본문\n\n누가: 없다\n", encoding="utf-8")
+def _commit(email):
+    subprocess.run(["git", "-C", str(_H), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(_H), "commit", "-q", "-m", "t"], check=True,
+                   env={**os.environ, "GIT_AUTHOR_EMAIL": email, "GIT_COMMITTER_EMAIL": email,
+                        "GIT_AUTHOR_NAME": "t", "GIT_COMMITTER_NAME": "t"})
+    return subprocess.run(["git", "-C", str(_H), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+_h = _commit("human@x")
+origin._사람커밋_캐시.clear()
+ok("a human's commit is recognised in mail mode", origin.사람커밋(_H, _h))
+ok("the judged line maps to that commit", origin.사람이_쓴_줄_커밋(_H, _H / "ORIGIN-REVIEW.md").get(7) == _h)
+ok("a judgement backed by that commit counts", origin.사람판정(_H, "aaaaaaaa", {"누가": "작가", "커밋": _h}))
+ok("the same commit cannot vouch for a value it does not contain",
+   not origin.사람판정(_H, "aaaaaaaa", {"누가": "채택", "커밋": _h}))
+ok("nor for an item it never judged", not origin.사람판정(_H, "bbbbbbbb", {"누가": "작가", "커밋": _h}))
+ok("a bare string written into the sidecar does not count", not origin.사람판정(_H, "aaaaaaaa", "작가"))
+ok("a dict without a commit does not count", not origin.사람판정(_H, "aaaaaaaa", {"누가": "작가", "근거": "chat"}))
+(_H / "ORIGIN-REVIEW.md").write_text((_H / "ORIGIN-REVIEW.md").read_text(encoding="utf-8").replace("누가: 없다", "누가: 채택"), encoding="utf-8")
+_c = _commit(origin.클로드메일)
+origin._사람커밋_캐시.clear()
+ok("Claude's own commit is not a human commit", not origin.사람커밋(_H, _c))
+ok("so a judgement it wrote does not count", not origin.사람판정(_H, "bbbbbbbb", {"누가": "채택", "커밋": _c}))
+(_H / ".origin.yml").write_text("문서:\n  - \"*.md\"\n사람확인: 서명\n", encoding="utf-8")
+origin._사람커밋_캐시.clear()
+ok("in signature mode a commit whose committer is not GitHub is rejected outright",
+   not origin.사람커밋(_H, _h) and "committer" in origin.사람커밋_사유.get(_h, ""), origin.사람커밋_사유.get(_h))
+shutil.rmtree(_H, ignore_errors=True)
+
+
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:
     print(f"  - {f}")
