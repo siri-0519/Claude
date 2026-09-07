@@ -21,7 +21,7 @@ os.environ["OPS_ROOT"] = str(TMP)
 for d in ("vault/docs", "vault/knowledge", "vault/inbox", "memory/log",
           "memory/digest", "memory/decisions", ".meta"):
     (TMP / d).mkdir(parents=True, exist_ok=True)
-for f in ("ops/lib/core.py", "ops/rules/hard.yml", "ops/rules/soft.md",
+for f in ("ops/lib/core.py", "ops/lib/ledger.py", "ops/lib/draft.py", "ops/rules/hard.yml", "ops/rules/soft.md",
           "ops/schema/frontmatter.yml", "ops/bin/ops", ".claude/hooks/hook.py",
           "CLAUDE.md", "memory/STATE.md"):
     (TMP / f).parent.mkdir(parents=True, exist_ok=True)
@@ -405,6 +405,88 @@ origin._사람커밋_캐시.clear()
 ok("in signature mode a commit whose committer is not GitHub is rejected outright",
    not origin.사람커밋(_H, _h) and "committer" in origin.사람커밋_사유.get(_h, ""), origin.사람커밋_사유.get(_h))
 shutil.rmtree(_H, ignore_errors=True)
+
+
+# ------------------------------------------------------------ ledger ----
+# 규칙 대장 — 목표 없는 규칙 · 배선 안 된 훅 · 손으로 고친 생성 파일은 막고, 문장만 있는 규칙은 센다.
+_L = Path(tempfile.mkdtemp(prefix="ledger-"))
+(_L / ".claude" / "hooks").mkdir(parents=True)
+(_L / ".githooks").mkdir()
+(_L / ".claude" / "hooks" / "a.py").write_text("#\n")
+(_L / ".claude" / "settings.json").write_text(json.dumps(
+    {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/a.py"}]}]}}))
+(_L / ".githooks" / "pre-commit").write_text("#!/bin/sh\npython3 x.py 검사\n")
+_ledger_ok = """목표:
+  1: "규칙 준수 — 훅으로"
+  2: "문맥 유지 — 다음 세션"
+절:
+  - 제목: "하나"
+    규칙:
+      - {번호: 1, 문장: "훅이 잡는다", 목표: [1], 출처: 본인, 거는곳: [{자리: 훅, 이름: a.py}]}
+      - {번호: 2, 문장: "게이트가 잡는다", 목표: [2], 출처: 본인목표, 거는곳: [{자리: 커밋, 이름: "x.py 검사"}]}
+      - {번호: 3, 문장: "문장만 들어간다", 목표: [2], 출처: 내가, 거는곳: [{자리: 넣기}]}
+"""
+(_L / ".rules.yml").write_text(_ledger_ok, encoding="utf-8")
+import ledger  # noqa: E402
+_p, _changed = ledger.build(_L)
+ok("ledger build writes the rules file from the ledger", _p.is_file() and _changed and ledger.생성표지 in _p.read_text())
+ok("the generated file carries goal tags per rule", "⟨목표 1 · 훅 a.py⟩" in _p.read_text(), _p.read_text()[-300:])
+_m, _n = ledger.검사(_L)
+ok("a consistent ledger passes the gate", _m == [], str(_m))
+ok("rules with no check are counted by name, not blocked", any("규칙 1-3" in x for x in _n), str(_n))
+ok("현황 reports goals with no check", "규칙 3개 · 검사 있는 것 2" in ledger.현황(_L), ledger.현황(_L))
+_p.write_text(_p.read_text() + "\n- 손으로 덧붙인 줄\n")
+_m, _ = ledger.검사(_L)
+ok("a hand-edited generated file is blocked", any("대장과 다르다" in x for x in _m), str(_m))
+ledger.build(_L)
+(_L / ".rules.yml").write_text(_ledger_ok.replace("목표: [1], 출처: 본인", "출처: 본인"), encoding="utf-8")
+ledger.build(_L)
+_m, _ = ledger.검사(_L)
+ok("a rule without a goal is blocked by name", any("규칙 1-1" in x and "목표가 없다" in x for x in _m), str(_m))
+(_L / ".rules.yml").write_text(_ledger_ok.replace("이름: a.py", "이름: nope.py"), encoding="utf-8")
+ledger.build(_L)
+_m, _ = ledger.검사(_L)
+ok("a rule pointing at a missing hook is blocked", any("훅 파일이 없다" in x for x in _m), str(_m))
+(_L / ".rules.yml").write_text(_ledger_ok.replace("이름: a.py", "이름: b.py"), encoding="utf-8")
+(_L / ".claude" / "hooks" / "b.py").write_text("#\n")
+ledger.build(_L)
+_m, _ = ledger.검사(_L)
+ok("a hook that exists but is not wired in settings.json is blocked", any("배선돼 있지 않다" in x for x in _m), str(_m))
+(_L / ".rules.yml").write_text(_ledger_ok.replace('"x.py 검사"', '"y.py 검사"'), encoding="utf-8")
+ledger.build(_L)
+_m, _ = ledger.검사(_L)
+ok("a commit check the gate does not call is blocked", any("부르지 않는다" in x for x in _m), str(_m))
+(_L / ".rules.yml").write_text(_ledger_ok.replace("목표: [2], 출처: 본인목표", "목표: [9], 출처: 본인목표"), encoding="utf-8")
+ledger.build(_L)
+_m, _ = ledger.검사(_L)
+ok("an unknown goal number is blocked", any("없는 목표 번호" in x for x in _m), str(_m))
+(_L / ".rules.yml").write_text(_ledger_ok, encoding="utf-8"); ledger.build(_L)
+ok("목표별 lists the rules serving a goal", len(ledger.목표별(_L, 2)) == 2, str(ledger.목표별(_L, 2)))
+shutil.rmtree(_L, ignore_errors=True)
+
+# ------------------------------------------------------------- draft ----
+# 누가 냈나를 항 단위로 — 빈 항은 이름으로 짚고, 클로드·기존·틀을 사이드카에 적는다.
+_D = Path(tempfile.mkdtemp(prefix="draft-"))
+subprocess.run(["git", "init", "-q"], cwd=_D, check=False)
+(_D / ".origin.yml").write_text("문서:\n  - \"*.md\"\n사람확인: 메일\n사람메일:\n  - \"human@x\"\n", encoding="utf-8")
+(_D / "a.md").write_text("# 제목\n\n마지막 갱신: 2026-09-07\n\n## 1. 절\n\n- 첫 항이다\n- 둘째 항이다\n\n| 머리 | 칸 |\n|---|---|\n| **값** | 하나 |\n", encoding="utf-8")
+import draft  # noqa: E402
+origin._사람커밋_캐시.clear()
+_rc, _out = draft.검사(_D)
+ok("draft 검사 names every unmarked item", _rc == 1 and "a.md" in _out and "첫 항이다" in _out, _out)
+_n = draft.채우기(_D, draft.묵은것)
+ok("기존 marks every unmarked item once", _n >= 4 and draft.검사(_D)[0] == 0, f"{_n} {draft.검사(_D)[1]}")
+(_D / "a.md").write_text((_D / "a.md").read_text(encoding="utf-8") + "- 새로 쓴 항\n", encoding="utf-8")
+_rc, _out = draft.검사(_D)
+ok("a new item after 기존 is caught by name", _rc == 1 and "새로 쓴 항" in _out and "첫 항이다" not in _out, _out)
+ok("표시 marks it as Claude's and the gate passes", draft.채우기(_D, draft.내것) == 1 and draft.검사(_D)[0] == 0)
+_q, _t = draft.검토문서(_D, "a.md")
+_rv = (_D / "ORIGIN-REVIEW.md").read_text(encoding="utf-8")
+ok("검토문서 drops structure (rule · table head · 갱신) and keeps content",
+   _t >= 2 and "마지막 갱신" not in _rv and "첫 항이다" in _rv and "누가: 없다" in _rv, _rv[:400])
+ok("table rows are rendered readable, not as pipes", "**값** · 하나" in _rv, _rv[-300:])
+ok("현황 splits 판정·클로드·기존·틀·빈 것", "클로드 1개" in draft.현황(_D) and "빈 것" in draft.현황(_D), draft.현황(_D))
+shutil.rmtree(_D, ignore_errors=True)
 
 
 print(f"\n{PASSED} passed, {len(FAILED)} failed")

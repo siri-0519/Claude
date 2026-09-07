@@ -9,6 +9,8 @@
   ops build               regenerate every derived file
   ops check               run every mechanical rule right now
   ops origin              누가 냈나 — 항마다 출처를 세고 사람의 판정을 받는다
+  ops draft               누가 냈나 — 항 단위 표시(클로드·기존·틀)와 읽을 수 있는 판정 문서
+  ops ledger              규칙 대장 — 규칙마다 목표·검사가 붙었는지 보고, 규칙 파일을 만든다
 """
 from __future__ import annotations
 
@@ -353,6 +355,76 @@ def cmd_origin(a) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ draft ----
+
+def cmd_draft(a) -> int:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    import draft
+    뿌리 = _origin_root()
+    if a.op == "검사":
+        rc, 글 = draft.검사(뿌리)
+        print(글)
+        return rc
+    if a.op in ("표시", "기존"):
+        값 = draft.내것 if a.op == "표시" else draft.묵은것
+        n = draft.채우기(뿌리, 값)
+        print(f"[누가 냈나] {n}개 항에 「{값}」 을 적었다. 사이드카(.meta.yml)도 같이 커밋한다.")
+        print("  이 값은 판정이 아니다 — 본인이 낸 것은 검토 문서로 항출처에 올린다.")
+        return 0
+    if a.op == "현황":
+        print(draft.현황(뿌리))
+        return 0
+    if a.op == "검토":
+        if not a.문서:
+            raise SystemExit("검토할 문서를 준다: ops draft 검토 <파일>")
+        n, 틀 = draft.검토문서(뿌리, a.문서)
+        print(f"ORIGIN-REVIEW.md 를 만들었다 — {a.문서} · 물을 것 {n}개"
+              + (f" · 틀로 뺀 것 {틀}개" if 틀 else "") + ".")
+        print("  GitHub 웹에서 누가: 줄을 채우고 커밋하면 `ops origin <파일> --읽는다` 로 들어온다.")
+        return 0
+    return 1
+
+
+# ----------------------------------------------------------------- ledger ----
+
+def _ledger_root() -> Path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    import ledger
+    return ledger.뿌리찾기(Path.cwd())
+
+
+def cmd_ledger(a) -> int:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    import ledger
+    뿌리 = _ledger_root()
+    if a.op == "build":
+        p, 바뀜 = ledger.build(뿌리)
+        print(f"{p.relative_to(뿌리)} 를 {'다시 만들었다' if 바뀜 else '그대로 둔다 — 대장과 같다'}.")
+        return 0
+    if a.op == "검사":
+        막음, 알림 = ledger.검사(뿌리)
+        for x in 알림:
+            print(f"[규칙 대장] {x}")
+        if 막음:
+            print(f"[규칙 대장] 막는다 — {len(막음)}건:")
+            for x in 막음:
+                print(f"   {x}")
+            return 1
+        print(f"[규칙 대장] 통과 — {ledger.현황(뿌리).splitlines()[0]}")
+        return 0
+    if a.op == "현황":
+        print(ledger.현황(뿌리))
+        return 0
+    if a.op == "목표":
+        if a.번호 is None:
+            raise SystemExit("목표 번호를 준다: ops ledger 목표 4")
+        줄 = ledger.목표별(뿌리, a.번호)
+        print(f"목표 {a.번호} 를 지키는 규칙 {len(줄)}개" + (":" if 줄 else " — 없다"))
+        print("\n".join(줄))
+        return 0
+    return 1
+
+
 # ------------------------------------------------------------------ hooks ----
 # 레포 위에서 세션이 열리면 어느 레포의 .claude/settings.json 도 안 읽힌다.
 # 위 디렉터리에 설정 하나를 만들어 아래 레포들의 훅을 전부 걸어 준다.
@@ -478,6 +550,16 @@ def main() -> int:
     p.add_argument("--찾기", metavar="말", help="그 말이 든 항만 낸다")
     p.add_argument("--몇개", type=int, metavar="N", help="앞에서 N개만 담는다")
     p.set_defaults(fn=cmd_origin)
+
+    p = sub.add_parser("draft", help="누가 냈나 — 항 단위 표시와 판정 문서 (개수 대신 이름으로 본다)")
+    p.add_argument("op", choices=["검사", "표시", "기존", "현황", "검토"])
+    p.add_argument("문서", nargs="?", help="검토할 문서 (검토 때만)")
+    p.set_defaults(fn=cmd_draft)
+
+    p = sub.add_parser("ledger", help="규칙 대장 — .rules.yml 에서 규칙 파일을 만들고 목표·검사를 본다")
+    p.add_argument("op", choices=["build", "검사", "현황", "목표"])
+    p.add_argument("번호", nargs="?", type=int, help="목표 번호 (목표 때만)")
+    p.set_defaults(fn=cmd_ledger)
 
     p = sub.add_parser("hooks", help="훅이 실제로 도는지 보고, 안 돌면 걸어 준다")
     p.add_argument("--설치", action="store_true", help="위 디렉터리에 설정을 만들고 git 훅을 깐다")
