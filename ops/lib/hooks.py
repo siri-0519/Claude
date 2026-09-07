@@ -136,6 +136,10 @@ def 설정짓기(위: Path, ops: Path) -> dict:
     rs = 레포들(위)
     주 = 주레포(rs)
     hooks: dict[str, list] = {}
+    # 레포마다 막아 둔 도구(permissions.deny)는 위 디렉터리에서 연 세션에도 그대로 걸어야 한다.
+    # 2026-09-07 — 레포 설정은 PR · 예약 · GitHub 쓰기를 막고 있었는데, 위 폴더에서 연 세션은
+    # 그 설정을 읽지 않아 전부 열려 있었다. 아래 레포들의 deny 를 합쳐 넣는다.
+    막을것: set[str] = set()
 
     def 걸기(이벤트: str, 자리: str, 항목: dict, matcher: str | None = None) -> None:
         묶음 = {"hooks": [항목]}
@@ -147,6 +151,7 @@ def 설정짓기(위: Path, ops: Path) -> dict:
         h = r / ".claude/hooks"
         본 = json.loads((r / ".claude" / 설정이름).read_text(encoding="utf-8")) \
             if (r / ".claude" / 설정이름).is_file() else {}
+        막을것.update(x for x in (본.get("permissions") or {}).get("deny", []) if isinstance(x, str))
         for 이벤트, 묶음들 in (본.get("hooks") or {}).items():
             자리 = {"SessionStart": "session_start", "UserPromptSubmit": "user_prompt_submit",
                     "PreToolUse": "pre_tool_use", "PostToolUse": "post_tool_use",
@@ -171,10 +176,13 @@ def 설정짓기(위: Path, ops: Path) -> dict:
                     걸기(이벤트, 자리,
                          _훅명령(ops, r, 자리, cmd),
                          묶음.get("matcher"))
-    return {
+    out = {
         "$schema": "https://json.schemastore.org/claude-code-settings.json",
         "hooks": hooks,
     }
+    if 막을것:
+        out["permissions"] = {"deny": sorted(막을것)}
+    return out
 
 
 # -------------------------------------------------------------------- 설치 ----
