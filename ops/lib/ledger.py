@@ -22,7 +22,7 @@
       날짜: 2026-08-26
       거는곳:
         - {자리: 커밋, 이름: "decisions.py 검사"}   # .githooks/pre-commit 이 그 명령을 부르는가
-        - {자리: 훅, 이름: read-before-answer.py}   # 훅 파일이 있고 settings.json 에 배선됐는가
+        - {자리: 훅, 이름: read-before-answer.py}   # 훅 파일이 .claude/hooks 나 .claude-ops/ops/hooks 에 있고 settings.json 에 배선됐는가
         - {자리: 푸시, 이름: pre-push}              # .githooks/pre-push 가 있는가
         - {자리: 커밋메시지}                         # .githooks/commit-msg 가 있는가
         - {자리: 넣기}                               # 검사 없음 — 문장만 매 요청 들어간다
@@ -59,6 +59,7 @@ def 대장(뿌리: Path) -> dict:
     d.setdefault("넣는곳", ".claude/hooks/rules.md")
     d.setdefault("훅설정", ".claude/settings.json")
     d.setdefault("훅자리", ".claude/hooks")
+    d.setdefault("기계훅자리", ".claude-ops/ops/hooks")   # 레포마다 복사하지 않는 훅이 있는 곳
     d.setdefault("게이트", ".githooks/pre-commit")
     d.setdefault("푸시게이트", ".githooks/pre-push")
     d.setdefault("메시지게이트", ".githooks/commit-msg")
@@ -121,8 +122,8 @@ def 거는곳검사(뿌리: Path, d: dict, 절번호: int, r: dict) -> list[str]
         if 자리 == "넣기":
             continue
         if 자리 == "훅":
-            if not (뿌리 / d["훅자리"] / 이름).is_file():
-                문제.append(f"훅 파일이 없다 — {d['훅자리']}/{이름}")
+            if not ((뿌리 / d["훅자리"] / 이름).is_file() or (뿌리 / d["기계훅자리"] / 이름).is_file()):
+                문제.append(f"훅 파일이 없다 — {d['훅자리']}/{이름} 에도 {d['기계훅자리']}/{이름} 에도")
             elif 이름 not in 배선:
                 문제.append(f"훅이 {d['훅설정']} 에 배선돼 있지 않다 — {이름}")
         elif 자리 == "커밋":

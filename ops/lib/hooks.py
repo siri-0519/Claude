@@ -31,7 +31,7 @@ from pathlib import Path
 router이름 = ".claude-router.json"
 
 # 답을 보는 훅이다 — 레포마다 돌면 같은 말이 여러 벌 나오므로 주 레포에서만 돈다
-답훅 = ("stop-reply-rules.py", "user_prompt_submit")
+답훅 = ("stop-reply-rules.py", "check-reply.py", "check-plain-words.sh", "user_prompt_submit")
 
 # 자리에 파일 경로가 없다. 어느 레포인지 payload 로 못 가리므로 전부 돈다
 파일없는자리 = ("session_start", "user_prompt_submit", "stop")
@@ -157,16 +157,24 @@ def 설정짓기(위: Path, ops: Path) -> dict:
                     cmd = cmd.replace('"$CLAUDE_PROJECT_DIR"', str(r)) \
                              .replace("${CLAUDE_PROJECT_DIR}", str(r)) \
                              .replace("$CLAUDE_PROJECT_DIR", str(r))
-                    이름 = Path(cmd.split()[0].strip('"')).name
+                    # 명령이 python3 로 시작하면 둘째 낱말이 스크립트다
+                    낱말 = [w.strip('"') for w in cmd.split()]
+                    스크립트 = next((w for w in 낱말 if w.endswith((".py", ".sh"))), 낱말[0] if 낱말 else "")
+                    이름 = Path(스크립트).name
+                    # 훅 파일은 레포의 .claude/hooks 에 있거나, 기계(.claude-ops/ops/hooks)에 있다 (2026-09-07).
+                    # 기계에 둔 훅은 레포마다 복사하지 않으므로 거기서도 찾는다.
+                    파일 = h / 이름
+                    if not 파일.is_file():
+                        파일 = r / ".claude-ops" / "ops" / "hooks" / 이름
                     # 답을 보는 훅은 이름 목록만으로 못 가른다 — broadcast 의 답 검사가
                     # 목록에 없어서 creation 의 대화에 걸렸다 (2026-09-05). 답 끝 자리에서
                     # transcript 를 읽는 스크립트는 전부 답 훅으로 본다.
-                    답읽음 = 이벤트 == "Stop" and (h / 이름).is_file() and \
-                        "transcript_path" in (h / 이름).read_text(encoding="utf-8", errors="ignore")
+                    답읽음 = 이벤트 == "Stop" and 파일.is_file() and \
+                        "transcript_path" in 파일.read_text(encoding="utf-8", errors="ignore")
                     if 이름 in 답훅 or 이벤트 == "UserPromptSubmit" or 답읽음:
                         if 주 is None or r != 주:
                             continue
-                    if not (h / 이름).is_file():
+                    if not 파일.is_file():
                         continue
                     걸기(이벤트, 자리,
                          _훅명령(ops, r, 자리, cmd),

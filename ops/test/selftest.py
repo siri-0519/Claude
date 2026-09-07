@@ -21,7 +21,7 @@ os.environ["OPS_ROOT"] = str(TMP)
 for d in ("vault/docs", "vault/knowledge", "vault/inbox", "memory/log",
           "memory/digest", "memory/decisions", ".meta"):
     (TMP / d).mkdir(parents=True, exist_ok=True)
-for f in ("ops/lib/core.py", "ops/lib/ledger.py", "ops/lib/draft.py", "ops/rules/hard.yml", "ops/rules/soft.md",
+for f in ("ops/lib/core.py", "ops/lib/ledger.py", "ops/lib/draft.py", "ops/lib/reply.py", "ops/rules/hard.yml", "ops/rules/soft.md",
           "ops/schema/frontmatter.yml", "ops/bin/ops", ".claude/hooks/hook.py",
           "CLAUDE.md", "memory/STATE.md"):
     (TMP / f).parent.mkdir(parents=True, exist_ok=True)
@@ -487,6 +487,35 @@ ok("검토문서 drops structure (rule · table head · 갱신) and keeps conten
 ok("table rows are rendered readable, not as pipes", "**값** · 하나" in _rv, _rv[-300:])
 ok("현황 splits 판정·클로드·기존·틀·빈 것", "클로드 1개" in draft.현황(_D) and "빈 것" in draft.현황(_D), draft.현황(_D))
 shutil.rmtree(_D, ignore_errors=True)
+
+# ------------------------------------------------------------- reply ----
+# 내 마지막 답 검사 — 낱말 목록과 길이 기준은 레포의 .rules.yml 이 준다.
+import reply  # noqa: E402
+from datetime import date as _date
+_c = reply.설정({"답검사": {"지어낸이름": ["사다리"], "비유": ["빚"], "긴답": {"질문": 10, "답": 40}}})
+ok("a clean answer passes", reply.검사("오늘 9/7에 잰다.", "뭐 하지", _c, _date(2026, 9, 7)) == [])
+ok("an invented name is caught", any("사다리" in x for x in reply.검사("사다리 2단계", "?", _c)))
+ok("a metaphor the user flagged is caught", any("빚" in x for x in reply.검사("빚이 쌓인다", "?", _c)))
+ok("a relative date is caught with today's date", any("방금" in x and "9/7" in x for x in reply.검사("방금 했다", "?", _c, _date(2026, 9, 7))))
+ok("a relative date inside a 「song title」 is not caught", reply.검사("「어제보다 오늘 더」를 부른다", "?", _c, _date(2026, 9, 7)) == [])
+ok("a long answer to a short question is caught", any("결론부터" in x for x in reply.검사("가" * 41, "짧다", _c)))
+ok("the same answer to a long question passes", reply.검사("가" * 41, "긴" * 11, _c) == [])
+ok("defaults fill missing lists", reply.설정({})["상대날짜"] == reply.기본_상대날짜 and reply.설정({})["긴답"] == reply.기본_긴답)
+_T = Path(tempfile.mkdtemp(prefix="reply-"))
+(_T / "t.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "왜?"}}) + "\n"
+                             + json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "아까 그랬다"}]}}) + "\n",
+                             encoding="utf-8")
+ok("transcript reader returns the last answer and question", reply.마지막_답과_물음(_T / "t.jsonl") == ("아까 그랬다", "왜?"))
+(_T / ".rules.yml").write_text("목표:\n  1: x\n절: []\n답검사:\n  비유: [빚]\n", encoding="utf-8")
+_r = subprocess.run([sys.executable, str(REAL / "ops/hooks/check-reply.py")],
+                    input=json.dumps({"transcript_path": str(_T / "t.jsonl")}), capture_output=True, text=True,
+                    env={**os.environ, "CLAUDE_PROJECT_DIR": str(_T)})
+ok("the Stop hook returns 2 and names the problem", _r.returncode == 2 and "아까" in _r.stderr, _r.stderr[:200])
+_r = subprocess.run([sys.executable, str(REAL / "ops/hooks/check-reply.py")],
+                    input=json.dumps({"transcript_path": str(_T / "t.jsonl"), "stop_hook_active": True}),
+                    capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(_T)})
+ok("a second pass (stop_hook_active) does not loop", _r.returncode == 0)
+shutil.rmtree(_T, ignore_errors=True)
 
 
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
