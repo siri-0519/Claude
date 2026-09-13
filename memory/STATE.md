@@ -11,26 +11,22 @@
 - 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기 — ops/rules/soft.md의 SR-001~005는 시드값입니다. vault/는 아직 비어 있고 ADR 1건뿐.
 
 **최근 로그**
+- `2026-09-14` decision: 이 레포는 틀이다 — 복사해서 쓰고 서브모듈로 잇지 않는다. 파생물 어긋남은 막지 않고 목록에 둔다
 - `2026-09-04` note: SessionStart 훅은 아직 실제 세션에서 검증 안 됨
 - `2026-09-04` handoff: 배선도 아티팩트 발행됨 · vault 편입 여부 미결
 - `2026-09-04` handoff: 다음 세션: soft.md를 실제 취향으로 교체하고 진짜 데이터 넣기
 - `2026-09-04` note: 훅을 직접 써보며 결함 2개 수정
 - `2026-09-04` decision: 검사 가능한 규칙은 전부 훅으로, 나머지만 자연어로
-- `2026-09-04` work: 작업 환경 초기 구축
 
 더 보려면: `ops/bin/ops ctx log -n 30` / `ops/bin/ops ctx log --grep 키워드`
 <!-- END GENERATED: auto -->
 
 ## 지금 하는 일
 
-- 작업 환경 구축 완료. `make test` 48개 통과. 브랜치 `claude/work-environment-setup-oiqrl4`.
+- 이 레포는 틀이다. 복사해서 이름을 바꿔 쓰고, 서브모듈로 잇지 않는다 [확인 2026-09-14]. 새 설계는 `설계.md`에 있다.
+- 본인 확인 대기: `설계.md` 5절의 판단 규칙 여덟의 문장, 6절의 옮기는 순서.
 
 ## 다음
 
-- `ops/rules/soft.md`의 SR-001~005는 **시드값** — 실제 취향으로 교체할 것
-- `vault/`는 비어 있음. 실제 데이터를 `ops/bin/ops new` / `ingest`로 넣으며 라벨 체계 다듬기
-- 규칙이 거슬리면 `ops/rules/hard.yml`을 고치면 됨 (규칙 = 코드, 표는 CLAUDE.md에 자동 반영)
-
-## 열린 질문
-
-- `vault/` 하위 분류(code/docs/knowledge/records/inbox)가 실제 데이터에 맞는지는 미검증
+- 확인이 오면 6절 1단계부터 한다. 기본 브랜치를 main으로 바꾸는 것은 본인이 GitHub 설정에서 한다.
+- `vault/`와 `ops new/ingest/find/link`는 세 레포가 안 쓴다. 틀을 다시 짤 때 뺄지 정한다.
