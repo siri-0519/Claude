@@ -29,7 +29,7 @@ import yaml
     "파일최대바이트": 30000,
     "목차최대줄": 800,
     "절최대줄": 120,
-    "판정": {"모델": "haiku", "명령": "claude", "시간": 180, "끄기": False},
+    "판정": {"모델": "haiku", "명령": "claude", "시간": 180, "끄기": False, "묶음": 40},
     "허용낱말": "ops/rules/낱말.txt",
     "상대날짜": ["어제", "엊그제", "그제", "내일", "모레", "아까", "방금", "지난번"],
     "기본브랜치": "main",
@@ -218,12 +218,44 @@ def 절나누기(글: str) -> list[tuple[int, str, int, int]]:
     return 나온것
 
 
+def 이름바뀐것(뿌리: Path) -> list[tuple[str, str]]:
+    """이 커밋에서 이름이 바뀐 파일과 폴더 — (옛 경로, 새 경로). 스테이지와 작업 트리 둘 다 본다.
+    폴더는 그 안의 파일이 다 같은 꼴로 옮겨졌을 때 한 쌍으로 더한다 (ops/ → 운영/)."""
+    쌍: dict[str, str] = {}
+    for 인자 in (("diff", "--cached", "-M", "--name-status", "HEAD"), ("diff", "-M", "--name-status", "HEAD")):
+        for ln in git(뿌리, *인자).split("\n"):
+            부분 = ln.split("\t")
+            if len(부분) == 3 and 부분[0].startswith("R"):
+                쌍[부분[1]] = 부분[2]
+    폴더: dict[str, str] = {}
+    for 옛, 새 in list(쌍.items()):
+        옛칸, 새칸 = 옛.split("/"), 새.split("/")
+        while 옛칸 and 새칸 and 옛칸[-1] == 새칸[-1]:
+            옛칸.pop(); 새칸.pop()
+        if 옛칸 and 새칸:
+            폴더["/".join(옛칸) + "/"] = "/".join(새칸) + "/"
+    return list(쌍.items()) + list(폴더.items())
+
+
 def 옛줄전부(뿌리: Path, c: dict | None = None) -> set[str]:
     """HEAD 에 있는 .md 파일 전부의 줄(양끝 공백을 뗀 것). 파일을 나누거나 옮겨도 이 줄들은 새 줄이 아니다.
-    주제 파일만 보면 STATUS.md 처럼 제외된 파일에서 옮긴 줄이 새 줄로 잡힌다 (2026-09-14 me 2단계 실측)."""
+    주제 파일만 보면 STATUS.md 처럼 제외된 파일에서 옮긴 줄이 새 줄로 잡힌다 (2026-09-14 me 2단계 실측).
+    이 커밋에서 파일이나 폴더의 이름이 바뀌었으면, 옛 줄에서 그 경로만 새 이름으로 바꾼 줄도 옛 줄이다 —
+    이름만 바꿔도 그 경로를 적은 줄이 전부 표시 없는 새 주장으로 잡혔다 (2026-09-14 broadcast 3단계 실측)."""
     s: set[str] = set()
     for r in git(뿌리, "ls-tree", "-r", "--name-only", "HEAD").split("\n"):
         if r.endswith(".md"):
             s.update(x.strip() for x in git(뿌리, "show", f"HEAD:{r}").split("\n"))
     s.discard("")
+    바뀜 = 이름바뀐것(뿌리)
+    if 바뀜:
+        더할것: set[str] = set()
+        for ln in s:
+            새줄 = ln
+            for 옛, 새 in 바뀜:
+                if 옛 in 새줄:
+                    새줄 = 새줄.replace(옛, 새)
+            if 새줄 != ln:
+                더할것.add(새줄)
+        s |= 더할것
     return s

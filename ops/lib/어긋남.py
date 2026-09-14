@@ -118,7 +118,16 @@ def 폐기결정항들(뿌리: Path, c: dict) -> list[str]:
     폐기: set[str] = set()
     for ln in p.read_text(encoding="utf-8").splitlines():
         m = re.search(r"\b(D-\d{3,})\b", ln)
-        if m and ("폐기" in ln or "~~" in ln):
+        if not m:
+            continue
+        if ln.lstrip().startswith("|"):
+            # 표 행 — 번호 칸이나 짧은 칸(날짜 · 상태)에 취소선이 있거나 상태가 폐기 · 합침이면 폐기다.
+            # 결정 문장 칸(제일 긴 칸)의 취소선은 그 결정이 뒤집은 옛 안이라 세지 않는다 (2026-09-14 broadcast 실측).
+            칸 = [x.strip() for x in ln.strip().strip("|").split("|")]
+            긴칸 = max(칸, key=len) if 칸 else ""
+            if any(("~~" in x or x.startswith(("폐기", "합침"))) for x in 칸 if x is not 긴칸 or x == 칸[0]):
+                폐기.add(m.group(1))
+        elif "폐기" in ln or "~~" in ln:
             폐기.add(m.group(1))
     if not 폐기:
         return []
