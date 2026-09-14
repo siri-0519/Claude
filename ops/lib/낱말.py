@@ -67,10 +67,15 @@ def 아는말(뿌리: Path, c: dict, 사용자글: list[str], 읽은파일: set[
 
 
 def 후보(답: str, 아는: set[str]) -> list[str]:
-    """답에 있는데 아는 말 어디에도 없는 낱말. 조사 뗀 꼴이 하나라도 아는 말이면 안다고 본다."""
+    """답에 있는데 아는 말 어디에도 없는 낱말. 조사 뗀 꼴이 하나라도 아는 말이면 안다고 본다.
+    아는 말이 앞부분이고 뒤에 세 글자 이하가 붙은 꼴("커밋했고" · "표시해서")도 안다고 본다 — 활용 어미까지 떼려다
+    "커밋했고"를 후보로 넘겨 판정 모델이 "커밋"을 모르는 말로 잡았다 (2026-09-14)."""
+    앞말들 = sorted((w for w in 아는 if len(w) >= 2), key=len, reverse=True)
     나온것 = []
     for w in sorted(낱말들(답)):
         if 어간후보(w) & 아는:
+            continue
+        if any(w.startswith(a) and len(w) - len(a) <= 3 for a in 앞말들):
             continue
         나온것.append(w)
     return 나온것
