@@ -102,8 +102,10 @@ def 파일크기(뿌리: Path, c: dict) -> list[str]:
 
 
 def 작업로그(뿌리: Path) -> list[str]:
-    if "worklog.md" in git(뿌리, "diff", "--cached", "--name-only").split("\n"):
-        return ["worklog.md 가 스테이지에 있다. 커밋하지 않는다: git rm --cached worklog.md"]
+    """worklog.md 를 더하거나 고친 채로 커밋하는 것을 막는다. 추적에서 빼는 것(D)은 바로 그 일이라 막지 않는다."""
+    for ln in git(뿌리, "diff", "--cached", "--name-status").split("\n"):
+        if ln.endswith("\tworklog.md") and not ln.startswith("D"):
+            return ["worklog.md 가 스테이지에 있다. 커밋하지 않는다: git rm --cached worklog.md"]
     return []
 
 

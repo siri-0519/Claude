@@ -43,7 +43,8 @@ def 물음(요청: str, 답: str, 규칙: str, 바뀐파일: list[str], 낱말�
             "글 전체를 읽고 판정한다. 한 문장에 빠진 근거나 표시가 바로 앞뒤 문장에 있으면 어긴 것이 아니다. "
             "무엇을 봤는지 적힌 값은 직접 본 것이다. "
             "「직접 본 것 · 추측 · 크기를 밝힌다」는 사실 · 값 · 판정을 말하는 문장에만 건다. "
-            "에이전트가 한 일이나 할 일을 말하는 문장(했다 · 한다 · 기다린다)에는 걸지 않는다.\n")
+            "에이전트가 한 일이나 할 일을 말하는 문장(했다 · 한다 · 기다린다)에는 그 규칙을 걸지 않는다. "
+            "표시가 붙어 있는 것 자체는 어느 규칙도 어긴 것이 아니다.\n")
     부분 = [머리, "=== 규칙 ===", 규칙]
     if 자리 == "답":
         부분 += ["=== 사용자의 이번 요청 ===", 요청 or "(없음)", "=== 에이전트의 답 ===", 답]
@@ -73,7 +74,7 @@ def 부르기(뿌리: Path, 글: str, c: dict | None = None) -> tuple[list[dict]
     # 그래서 빈 임시 디렉터리에서 부르고, 이 기계의 훅은 OPS_HOOKS=off 로 끈다.
     import os, tempfile
     빈곳 = tempfile.mkdtemp(prefix="ops-judge-")
-    env = dict(os.environ, OPS_HOOKS="off", OPS_판정중="1")
+    env = dict(os.environ, OPS_HOOKS="off", OPS_JUDGING="1")
     try:
         r = subprocess.run([명령, "-p", "--model", str(j.get("모델") or "haiku"), "--output-format", "text"],
                            input=글, capture_output=True, text=True, timeout=int(j.get("시간") or 90),

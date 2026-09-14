@@ -56,4 +56,4 @@
 | 답 끝 | 상대 날짜 → 판정 모델(「답할 때」 규칙 + 낱말 후보) → 커밋 · push → 어긋남 개수 |
 | 커밋 직전 · push 직전 | `ops/hooks/pre-commit` · `ops/hooks/pre-push` |
 
-훅을 고칠 때만 `OPS_HOOKS=off`, 판정만 끄려면 `OPS_판정=off` 다. 자체 시험은 `python3 ops/test/selftest.py` 다.
+훅을 고칠 때만 `OPS_HOOKS=off`, 판정만 끄려면 `OPS_JUDGE=off` 다. 자체 시험은 `python3 ops/test/selftest.py` 다.

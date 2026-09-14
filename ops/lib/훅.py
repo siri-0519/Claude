@@ -26,7 +26,7 @@ from 공통 import (설정, git, rel, 주제파일들, 훅입력, 문맥출력, 
 def 돌리기(자리: str, 뿌리: Path) -> int:
     p = 훅입력()
     c = 설정(뿌리)
-    if os.environ.get("OPS_HOOKS") == "off" or os.environ.get("OPS_판정중"):
+    if os.environ.get("OPS_HOOKS") == "off" or os.environ.get("OPS_JUDGING"):
         return 0                                   # 훅을 고칠 때 · 판정 세션 안
     try:
         return {"session_start": 세션시작, "user_prompt_submit": 물음직전, "pre_tool_use": 도구직전,
