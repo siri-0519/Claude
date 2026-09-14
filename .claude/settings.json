@@ -20,7 +20,7 @@
           "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook.py post_tool_use" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "timeout": 150,
+      { "hooks": [ { "type": "command", "timeout": 240,
         "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook.py stop" } ] }
     ]
   },

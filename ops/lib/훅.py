@@ -285,7 +285,7 @@ def 라우트(자리: str, 위: Path) -> int:
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(r))
         try:
             x = subprocess.run([sys.executable, str(r / ".claude/hooks/hook.py"), 자리], input=raw, text=True,
-                               capture_output=True, cwd=str(r), env=env, timeout=110)
+                               capture_output=True, cwd=str(r), env=env, timeout=230)
         except subprocess.TimeoutExpired:
             print(f"[훅] {r.name} {자리} 이 시간을 넘겼다", file=sys.stderr)
             continue
