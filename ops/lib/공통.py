@@ -64,7 +64,8 @@ def rel(뿌리: Path, p: Path | str) -> str:
 
 
 def git(뿌리: Path, *a: str, ok: bool = True) -> str:
-    r = subprocess.run(["git", "-C", str(뿌리), *a], capture_output=True, text=True)
+    # core.quotePath=false — 한글 파일 이름이 "\354\226\264…" 로 나오는 것을 막는다 (2026-09-14 실측: 답 끝 훅의 파일 목록)
+    r = subprocess.run(["git", "-C", str(뿌리), "-c", "core.quotePath=false", *a], capture_output=True, text=True)
     if r.returncode != 0 and not ok:
         raise RuntimeError(r.stderr.strip())
     return r.stdout.rstrip("\n")
