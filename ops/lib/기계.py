@@ -82,7 +82,7 @@ def 목차크기(뿌리: Path, c: dict, 글: str | None = None) -> list[str]:
         글 = p.read_text(encoding="utf-8")
     줄수 = len(글.split("\n"))
     문제 = []
-    방법 = "내용을 그 주제 파일로 옮기고 목차에는 「이런 말이 나오면 이 파일을 읽는다」 한 줄만 남긴다"
+    방법 = "이번 답 안에서 내용을 그 주제 파일(없으면 새로 만들고 목차에 한 줄 더한다)로 옮기고 목차에는 「이런 말이 나오면 이 파일을 읽는다」 한 줄만 남긴다"
     if 줄수 > int(c["목차최대줄"]):
         문제.append(f"CLAUDE.md 가 {줄수}줄이다. {c['목차최대줄']}줄 안으로 줄인다. {방법}")
     for 수준, 제목, s, e in 절나누기(글):
@@ -135,7 +135,7 @@ def 셸검사(명령: str, 뿌리: Path, c: dict) -> list[str]:
     명령 = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1(?:\n|$)", "<<HEREDOC\n", 명령, flags=re.S)
     if re.search(r"\bgit\b[^|;&]*\bpush\b[^|;&]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s--delete\b|\s-d\b|\s\+\S|\s:\S)", 명령):
         문제.append("이력을 다시 쓰거나 원격 브랜치를 지우는 push(--force · --delete · :브랜치)다. 하지 않는다. "
-                    "원격과 다르면 먼저 `git pull --no-rebase` 로 합친 뒤 보통 push 를 한다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다")
+                    "원격과 다르면 먼저 `git pull --no-rebase` 로 합친 뒤 보통 push 를 한다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다. 사용자에게 그렇게 알린다")
     if re.search(r"\bgit\b[^|;&]*\b(filter-branch|filter-repo)\b", 명령):
         문제.append("이력을 다시 쓰는 명령(filter-branch · filter-repo)이다. 하지 않는다. 이미 있는 커밋은 그대로 두고 새 커밋으로 고친다")
     m = re.search(r"\brm\b\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b(.*)", 명령)

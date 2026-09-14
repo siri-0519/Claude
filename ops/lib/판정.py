@@ -105,24 +105,32 @@ def 풀기(out: str) -> list[dict]:
     return 나온것
 
 
-def 규칙이름들(뿌리: Path) -> dict[str, str]:
-    """판단.md 의 "5. 직접 본 것 · 추측 · 크기를 밝힌다." 에서 번호 → 이름."""
+def 규칙전문들(뿌리: Path) -> dict[str, str]:
+    """판단.md 의 "5. 직접 본 것 · 추측 · 크기를 밝힌다. …" 줄에서 번호 → 그 규칙 전문."""
     p = 뿌리 / 규칙파일
     d: dict[str, str] = {}
     if p.is_file():
         for ln in p.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"^(\d+)\.\s+([^.]+?)\.", ln)
+            m = re.match(r"^(\d+)\.\s+(.+)$", ln.strip())
             if m:
                 d[m.group(1)] = m.group(2).strip()
     return d
 
 
+def 규칙이름들(뿌리: Path) -> dict[str, str]:
+    """번호 → 규칙의 첫 문장(이름)."""
+    return {k: v.split(".")[0].strip() for k, v in 규칙전문들(뿌리).items()}
+
+
 def 되돌리는말(어긴것: list[dict], 뿌리: Path | None = None) -> str:
-    이름 = 규칙이름들(뿌리) if 뿌리 else {}
+    전문 = 규칙전문들(뿌리) if 뿌리 else {}
     줄 = ["방금 쓴 답이 판단 규칙에 걸렸다. 판단 규칙은 다른 모델이 판정한 것이다. "
-          "걸린 문장만 고쳐서 그 부분만 다시 쓴다. 답 전체를 다시 붙이지 않는다."]
+          "걸린 문장은 통째로 다시 써서 그 문장만 낸다. 답 전체를 다시 붙이지 않는다."]
     for x in 어긴것:
         번호 = x['규칙']
-        머리 = f"규칙 {번호}" + (f"({이름[번호]})" if 번호 in 이름 else "")
-        줄.append(f"- {머리}: {x['문장']}" + (f" — {x['이유']}" if x['이유'] else ""))
+        줄.append(f"- 걸린 문장: {x['문장']}" + (f" — {x['이유']}" if x['이유'] else ""))
+        if 번호 in 전문:
+            줄.append(f"  규칙 {번호}: {전문[번호]}")
+        else:
+            줄.append(f"  규칙 {번호}")
     return "\n".join(줄)

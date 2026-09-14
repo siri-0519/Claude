@@ -84,9 +84,9 @@ def 문서판정(r: Path, c: dict) -> list[str]:
         return []
     for x in 어긴것:
         공통.횟수추가(r, "판정", x["규칙"], x["문장"][:80])
-    이름 = 판정.규칙이름들(r)
-    return [f"판정(다른 모델이 판단 규칙으로 본 것) — 규칙 {x['규칙']}" + (f"({이름[x['규칙']]})" if x['규칙'] in 이름 else "")
-            + f": {x['문장']}" + (f" — {x['이유']}" if x["이유"] else "") + ". 그 줄을 고치고 다시 커밋한다" for x in 어긴것]
+    전문 = 판정.규칙전문들(r)
+    return [f"판정(다른 모델이 판단 규칙으로 본 것) — 걸린 줄: {x['문장']}" + (f" — {x['이유']}" if x["이유"] else "")
+            + f". 그 줄을 고치고 다시 커밋한다. 규칙 {x['규칙']}: {전문.get(x['규칙'], '')}" for x in 어긴것]
 
 
 def cmd_ack(a) -> int:
@@ -215,7 +215,7 @@ def push검사(r: Path) -> int:
             continue
         lref, lsha, rref, rsha = 부분
         if set(lsha) == {"0"}:
-            막힘.append(f"{rref} 를 지우는 push 다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다")
+            막힘.append(f"{rref} 를 지우는 push 다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다. 사용자에게 그렇게 알린다")
         elif set(rsha) != {"0"}:
             import subprocess
             x = subprocess.run(["git", "-C", str(r), "merge-base", "--is-ancestor", rsha, lsha], capture_output=True)

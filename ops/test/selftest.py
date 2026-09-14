@@ -106,7 +106,7 @@ def main() -> int:
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Write", "tool_input": {"file_path": str(r / "STATUS.md"), "content": "x"}, "cwd": str(r)})
     확인(code == 2 and "스크립트가" in err and "ops build" in err, "생성 파일 Write 를 막는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "CLAUDE.md"), "old_string": "허리 디스크", "new_string": "손으로"}, "cwd": str(r)})
-    확인(code == 2 and "블록" in err and "손으로 고치지 않는다" in err, "CLAUDE.md 생성 블록 안의 Edit 를 막는다")
+    확인(code == 2 and "블록" in err and "ops build" in err, "CLAUDE.md 생성 블록 안의 Edit 를 막는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md"), "old_string": "## 운동\n", "new_string": "## 운동\n\n- 어제 계단을 올랐다\n"}, "cwd": str(r)})
     확인(code == 2 and "표시가 없다" in err and "어제" in err, "주제 파일 새 줄의 상대 날짜와 표시 없음을 막는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md"), "old_string": "## 운동\n", "new_string": "## 운동\n\n- 계단을 올랐다 [확인 2026-09-02]\n"}, "cwd": str(r)})
