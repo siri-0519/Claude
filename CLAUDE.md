@@ -1,99 +1,59 @@
-# 작업 규약
+# 목차 — 틀
 
-이 레포는 **쌓이는 모든 것**(코드·문서·지식·기록·결정·비정형 투입물)을 한 곳에 두되,
-각 조각이 **어디서 왔는지(provenance)** 를 기계가 알 수 있게 유지하는 것을 목표로 합니다.
+**규칙은 이 파일에 없다.** 기계 규칙은 `ops/rules/기계.yml`, 판단 규칙은 `ops/rules/판단.md` 에 있고, 훅이 쓰이는 자리에서 넣는다. 이 파일은 **어디에 뭐가 있는지만** 적는다.
 
-명령은 전부 하나입니다: **`ops/bin/ops`** (이하 `ops`). 다른 곳에 스크립트를 만들지 마세요.
+이 레포는 틀이다. 복사해서 이름을 바꾸고 `.ops.yml` 을 고쳐 쓴다. 서브모듈로 잇지 않는다. 설계는 `설계.md` 다.
 
----
+## 언제 무엇을 읽나
 
-## 1. 세션 시작 — 레포를 읽지 마세요
+대화가 이 주제에 닿으면 답하기 전에 그 파일을 읽는다. 셋째 칸은 그 파일의 「지금」 절 첫 줄이고 `ops build` 가 만든다.
 
-SessionStart 훅이 `memory/STATE.md`를 자동 주입합니다. 그게 출발점입니다.
-더 필요하면 **그때만** 좁혀서 읽으세요:
+<!-- BEGIN GENERATED: 목차 -->
+| 이런 말이 나오면 | 읽는다 | 지금 (그 파일의 「지금」 첫 줄) |
+|---|---|---|
+| 설계 · 목표 넷 · 맥락 · 토큰 · 파생물 · 규칙 두 종류 · 옮기는 순서 | `설계.md` | 이 레포는 틀이다. 복사해서 이름을 바꿔 쓰고 서브모듈로 잇지 않는다 [확인 2026-09-14]. |
+| 레포마다의 판단 규칙 전문 · 규칙 98개가 어디로 가나 · 검증 기록 | `설계-부록.md` | 부록 B의 문장이 레포마다 판정 모델에 넘기는 전문이다. 옮길 때 그 레포의 `ops/rules/판단.md`에 그대로 적는다 [확인 2026-09-14]. |
+<!-- END GENERATED: 목차 -->
 
-| 알고 싶은 것 | 명령 |
+세션 시작에 들어가는 것은 이 목차와 어긋남 목록(`memory/어긋남.md`)뿐이다. 지난 세션이 무엇을 했나는 `worklog.md`(git log 에서 만든다) 와 `ops log list` 에 있다.
+
+## 언제 무엇을 적나
+
+| 이런 게 나오면 | 적는다 |
 |---|---|
-| 최근에 무슨 일이 있었나 | `ops ctx log -n 20` |
-| 특정 주제의 이력 | `ops ctx log --grep 키워드` |
-| 어떤 자료가 있나 | `INDEX.md` → `ops find --label X --kind Y` |
-| 이건 어디서 나왔나 | `ops link why <id\|path>` |
-| 이걸 고치면 뭐가 깨지나 | `ops link impact <id\|path>` |
-| 지금 규칙 위반이 있나 | `ops check` |
+| 지금 참인 것 | 그 주제 파일의 「지금」 절. 열 줄 안이다. `STATUS.md` · `README.md` · 위 표의 셋째 칸은 거기서 `ops build` 가 만든다 |
+| 무엇을 왜 바꿨나 | 커밋 메시지 첫 줄. `worklog.md` 는 거기서 만들고 커밋하지 않는다 |
+| 다음 세션이 알아야 할 것 | `ops log add --종류 handoff --제목 "..."` |
+| 본인이 규칙 위반을 고치라고 한 것 | `ops 횟수 --본인 <규칙 이름>` |
+| 다른 파일을 읽고 다시 쓴 파일 | `ops 출처 <파생물> <출처>...` 로 사이드카를 만든다. 출처가 바뀌면 어긋남 목록에 오른다 |
 
-**전체 레포 훑기 금지.** `INDEX.md`는 모든 아티팩트의 id·라벨·요약을 담은 지도입니다.
-지도를 먼저 보고, 맞는 파일만 여세요. 큰 파일은 `sed -n 'A,Bp'`로 구간만.
+주제 파일에 새로 적는 주장 줄에는 표시를 붙인다. [확인]은 사용자가 말한 것, [제안]은 에이전트가 제안한 것이다. 없으면 저장이 막힌다.
 
-## 2. 데이터를 쌓을 때 — 라벨과 출처를 같이
+## 명령 하나 — `ops/bin/ops`
 
-```bash
-ops new <kind> <path> --title "..." --label a,b --summary "..." [--source <출처 id>]
-ops ingest [경로]        # 이미 있는 무라벨 파일들에 메타데이터 일괄 부여
-```
+| 하는 일 | 명령 |
+|---|---|
+| 생성 파일을 다시 만든다 | `ops build` · 원본과 다른 것만 보려면 `ops build --검사` |
+| 기계 규칙에 걸리는 것 | `ops check` · 커밋 직전에는 `ops check --커밋` 이 git 훅으로 돈다 |
+| 어긋남 목록 | `ops 어긋남` · 고쳤으면 `ops ack <파생물>` · 그대로 두면 `ops ack <파생물> --그대로 "이유"` |
+| 규칙 | `ops rules` |
+| 위반 횟수 | `ops 횟수` |
+| 훅이 도는지 | `ops hooks` · git 훅을 걸려면 `ops hooks --설치` (세션 시작 훅도 건다) |
 
-`kind`: `code` `doc` `knowledge` `record` `raw` `decision` — 정의는 `ops/schema/frontmatter.yml`.
-비정형/바이너리는 `<파일>.meta.yml` 사이드카로 같은 메타데이터를 갖습니다.
+## 이 레포
 
-**`--source`가 이 레포의 핵심입니다.** B가 A에서 파생됐다면 B는 A의 id와 *그 시점의 해시*를
-박아둡니다. 나중에 A의 본문이 바뀌면 B는 자동으로 `stale`이 되고, HR-009가 턴 종료를 막습니다.
+기본 브랜치는 `main` 이다. 세션마다 `claude/**` 브랜치가 생긴다. 고친 것은 커밋하고 그 브랜치로 push 한다. 답이 끝날 때 훅이 커밋 · push 를 확인한다. 기본 브랜치에 안 합쳐진 세션 브랜치는 어긋남 목록에 오른다. 기본 브랜치를 바꾸는 것과 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다.
 
-## 3. 무언가를 고쳤을 때
+## 훅 (`.claude/hooks/hook.py` → `ops/lib/훅.py`)
 
-1. 출처를 고쳤다면 → PostToolUse 훅이 영향받는 파생물을 즉시 알려줍니다.
-2. 파생물을 실제로 갱신했으면 → `ops link ack <파생물 id>` (해시 재고정 = "반영 완료" 선언)
-3. 갱신이 불필요하다고 판단했어도 → 그래도 `ack`. 판단했다는 사실을 남기는 것입니다.
-4. 생성물(INDEX.md, digest, 아래 규칙 블록, STATE.md 자동 블록)은 **손으로 고치지 말고** `ops build`.
+| 자리 | 하는 일 |
+|---|---|
+| 세션 시작 | 원격을 받고, `worklog.md` 와 어긋남 목록을 다시 만들고, 목록 전체와 레포 상태 한 줄을 넣는다 |
+| 물음 직전 | 어긋남이 있으면 개수 한 줄 |
+| Edit · Write 직전 | 생성 파일과 생성 블록을 막는다. 주제 파일의 새 줄에서 상대 날짜와 표시 없는 주장을 막는다. 「고칠 때」 규칙을 세션에 한 번 넣는다 |
+| Bash 직전 | 이력을 다시 쓰는 push · 기계 지우기 · 생성 파일로의 재지정을 막는다 |
+| 도구 직후 | 어긋남 목록을 다시 만들고 새로 오른 것을 알린다 |
+| 답 끝 | 상대 날짜 → 판정 모델(「답할 때」 규칙 + 낱말 후보) → 커밋 · push → 어긋남 개수 |
+| 커밋 직전 · push 직전 | `ops/hooks/pre-commit` · `ops/hooks/pre-push` |
 
-## 4. 세션 종료 전 — 다음 세션을 위해
-
-```bash
-ops log add --kind work     --title "무엇을 했는지" --body "..." --ref 경로
-ops log add --kind decision --title "무엇을 왜 정했는지"      # 큰 결정은 memory/decisions/에 ADR도
-ops log add --kind blocker  --title "막힌 것"
-ops log add --kind handoff  --title "다음 세션이 먼저 볼 것"
-```
-
-로그의 정본은 `memory/log/YYYY-MM.jsonl`(기계용)이고, 사람이 읽는
-`memory/digest/YYYY-MM.md`(한국어)는 거기서 **자동 생성**됩니다. 둘을 따로 쓰지 마세요 — 어긋납니다.
-`memory/STATE.md`는 "지금 상황" 카드입니다. 로그가 아니라 예산이므로 짧게 유지하세요.
-
----
-
-<!-- BEGIN GENERATED: rules -->
-### Hard rules — enforced by hooks, not by your goodwill
-
-| id | stage | on violation | rule |
-|----|-------|--------------|------|
-| `HR-001` | pre_tool | **deny** | No history rewriting or force-push |
-| `HR-002` | pre_tool | **deny** | No recursive delete of the repo's own machinery |
-| `HR-003` | pre_tool | **deny** | Generated files and generated blocks are not hand-editable |
-| `HR-004` | pre_tool | **deny** | No secrets into the working tree |
-| `HR-005` | pre_tool+stop | **deny** | memory/STATE.md stays under its size cap |
-| `HR-006` | pre_tool+stop | **deny** | New vault artifacts must carry front-matter |
-| `HR-007` | pre_tool | **warn** | Don't bulk-read the repo |
-| `HR-008` | post_tool | **warn** | Editing a source makes its descendants stale |
-| `HR-009` | stop | **deny** | No stale derivations at end of turn |
-| `HR-010` | stop | **deny** | Generated files must be current |
-| `HR-011` | stop | **deny** | A session that changed things must leave a log entry |
-
-Full text + escape hatches: `ops/rules/hard.yml`. A `deny` is not advice —
-the tool call does not run. Don't try to route around it; fix the cause or ask.
-
-### Soft rules — you enforce these; nothing else can
-
-- **SR-001** (no unhedged assertions) — Separate what you verified from what you inferred; never state an unchecked claim flatly.
-- **SR-002** (report outcomes faithfully) — Say plainly what failed, what you skipped, and what you did not verify. Never round a partial result up to "done".
-- **SR-003** (hold the scope) — Deliver exactly the requested scope. Raise a concern in one or two sentences, then finish the work — don't silently shrink or widen it.
-- **SR-004** (answer in Korean) — Reply to the user in Korean. Code, identifiers, file paths, and rule text stay in English.
-- **SR-005** (no preamble, no flattery) — Open with the answer. No "좋은 질문입니다", no restating the request back.
-
-Examples of each: `ops/rules/soft.md`.
-<!-- END GENERATED: rules -->
-
----
-
-## 위반이 막혔을 때
-
-`deny`는 조언이 아니라 차단입니다. 우회하려 하지 말고: 원인을 고치거나, 사용자에게 물으세요.
-정말 필요한 예외는 눈에 보이게 — `OPS_ALLOW=HR-001 git push --force ...` (쓰기 전에 사용자 동의).
-훅 자체를 끄는 `OPS_HOOKS=off`는 훅을 디버깅할 때만.
+훅을 고칠 때만 `OPS_HOOKS=off`, 판정만 끄려면 `OPS_판정=off` 다. 자체 시험은 `python3 ops/test/selftest.py` 다.

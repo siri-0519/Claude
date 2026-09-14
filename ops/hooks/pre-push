@@ -1,0 +1,4 @@
+#!/bin/sh
+# push 직전 — 원격 브랜치를 지우거나 이력을 다시 쓰는 push 를 막는다. 논리는 ops/bin/ops 의 hooks --push 다.
+[ "$OPS_HOOKS" = "off" ] && exit 0
+exec python3 "$(git rev-parse --show-toplevel)/ops/bin/ops" hooks --push

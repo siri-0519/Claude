@@ -1,313 +1,256 @@
 #!/usr/bin/env python3
-"""ops — the only tool you need in this repo.
+"""ops — 이 레포의 명령 하나. 다른 곳에 스크립트를 만들지 않는다.
 
-  ops ctx [card|log]      what happened / where things stand
-  ops find                locate artifacts without reading them
-  ops new / ingest        add data WITH its label and provenance
-  ops link                the derivation graph: why / impact / check / ack
-  ops log                 append to the machine log (digest regenerates itself)
-  ops build               regenerate every derived file
-  ops check               run every mechanical rule right now
+  ops build [--검사]                 생성 파일(STATUS.md · README.md · CLAUDE.md 목차 블록 · worklog.md · 어긋남 목록)을 다시 만든다 / 원본과 다른 것만 짚는다
+  ops check [--커밋]                 기계 규칙에 지금 걸리는 것 / 스테이지된 것만 (pre-commit)
+  ops ack <파생물> [--그대로 "이유"]  파생물의 출처 해시를 다시 고정한다 (어긋남 목록에서 지운다)
+  ops 출처 <파생물> <출처>...         파생물에 사이드카(.meta.yml)를 만든다
+  ops 어긋남                         어긋남 목록을 다시 만들고 보인다
+  ops log add --종류 K --제목 T [--본문 B] [--참조 P...] / ops log list [-n N]
+  ops 횟수 [--본인 <규칙> [--어디 W]] 규칙별 위반 횟수를 주 단위로 / 본인이 잡은 것을 적는다
+  ops 판정 [--문서] [--글 파일]        판정 모델을 손으로 돌린다 (문서: 스테이지된 새 줄 · 글: 파일 하나)
+  ops rules                          기계 규칙 대장과 판단 규칙 파일
+  ops worklog                        worklog.md 만 다시 만든다
+  ops hook <자리>                    훅 하나를 돌린다 (.claude/hooks/hook.py 가 부른다)
+  ops hooks [--설치] [--push]        훅이 도는지 / git 훅을 건다 / pre-push 검사
+  ops hooks --route <자리> --위 <디렉터리>   레포 여럿 위에서 연 세션의 라우터 (~/.claude/route.sh)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-import core  # noqa: E402
+import 공통  # noqa: E402
 
 
-def _csv(v: str | None) -> list[str]:
-    return [x.strip() for x in (v or "").split(",") if x.strip()]
+def 뿌리() -> Path:
+    return 공통.뿌리찾기(Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2]))
 
-
-# ------------------------------------------------------------------ ctx ----
-
-def cmd_ctx(a) -> int:
-    if a.what == "card":
-        print(core.session_card("manual"))
-        return 0
-    entries = core.log_read(months=a.months)
-    if a.kind:
-        entries = [e for e in entries if e.get("kind") in _csv(a.kind)]
-    if a.grep:
-        g = a.grep.lower()
-        entries = [e for e in entries
-                   if g in json.dumps(e, ensure_ascii=False).lower()]
-    if a.ref:
-        entries = [e for e in entries if any(a.ref in r for r in e.get("refs", []))]
-    entries = entries[-a.n:]
-    if a.json:
-        print(json.dumps(entries, ensure_ascii=False, indent=2))
-        return 0
-    if not entries:
-        print("(해당 로그 없음)")
-        return 0
-    for e in entries:
-        print(f"{e['ts'][:16]}  {e['kind']:<8} {e['title']}")
-        if e.get("body"):
-            for ln in e["body"].splitlines():
-                print(f"                          {ln}")
-        if e.get("refs"):
-            print("                          ↳ " + ", ".join(e["refs"]))
-    return 0
-
-
-# ----------------------------------------------------------------- find ----
-
-def cmd_find(a) -> int:
-    want_labels, hits = set(_csv(a.label)), []
-    for art in core.iter_artifacts():
-        if a.kind and art.kind not in _csv(a.kind):
-            continue
-        if want_labels and not want_labels.issubset(set(art.labels)):
-            continue
-        if a.id and a.id not in art.id:
-            continue
-        if a.text:
-            hay = " ".join([art.title, str(art.meta.get("summary", "")),
-                            art.body or ""]).lower()
-            if a.text.lower() not in hay:
-                continue
-        hits.append(art)
-    if a.json:
-        print(json.dumps([{"id": h.id, "path": core.rel(h.path), "kind": h.kind,
-                           "labels": h.labels, "title": h.title} for h in hits],
-                         ensure_ascii=False, indent=2))
-        return 0
-    for h in hits:
-        print(f"{h.id:<20} {h.kind:<10} {core.rel(h.path):<44} "
-              f"[{','.join(h.labels)}] {h.title}")
-    print(f"— {len(hits)} hit(s)", file=sys.stderr)
-    return 0
-
-
-# ------------------------------------------------------------------ new ----
-
-def _pin(parent_ids: list[str]) -> list[dict]:
-    arts = core.artifact_map()
-    out = []
-    for pid in parent_ids:
-        if pid not in arts:
-            raise SystemExit(f"error: unknown source id '{pid}' "
-                             f"(try: ops find --id {pid})")
-        out.append({"id": pid, "hash": arts[pid].hash})
-    return out
-
-
-def cmd_new(a) -> int:
-    if a.kind not in core.kinds():
-        raise SystemExit(f"error: kind must be one of {list(core.kinds())}")
-    path = Path(a.path)
-    if not path.is_absolute():
-        path = core.ROOT / path
-    if path.exists() and not a.force:
-        raise SystemExit(f"error: {core.rel(path)} exists (use --force to re-header)")
-    meta = {
-        "id": core.new_id(a.kind, a.title),
-        "kind": a.kind,
-        "title": a.title,
-        "labels": _csv(a.label),
-        "summary": (a.summary or "")[:core.limits()["summary_chars"]],
-        "status": "active",
-        "created": core.today(),
-        "updated": core.today(),
-    }
-    parents = _csv(a.source)
-    if parents:
-        meta["derives_from"] = _pin(parents)
-    body = a.body if a.body is not None else f"\n# {a.title}\n\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if core.is_texty(path):
-        path.write_text(core.join_frontmatter(meta, body), encoding="utf-8")
-    else:
-        path.touch()
-        core.sidecar_for(path).write_text(
-            __import__("yaml").safe_dump(meta, sort_keys=False, allow_unicode=True))
-    print(f"created {core.rel(path)}  id={meta['id']}")
-    core.build()
-    return 0
-
-
-def cmd_ingest(a) -> int:
-    """Give metadata to everything under vault/ that has none. Unblocks HR-006."""
-    targets = [Path(p) for p in a.paths] or [core.ROOT / r for r in core.ARTIFACT_ROOTS]
-    kind_by_dir = {v["home"]: k for k, v in core.kinds().items()}
-    made = 0
-    for t in targets:
-        t = t if t.is_absolute() else core.ROOT / t
-        files = [t] if t.is_file() else sorted(p for p in t.rglob("*") if p.is_file())
-        for p in files:
-            if not core._needs_frontmatter(p):
-                continue
-            if any(part in core.SKIP_DIRS for part in p.parts):
-                continue
-            if core.read_meta(p)[0].get("id"):
-                continue
-            r = core.rel(p)
-            kind = a.kind or next((k for d, k in kind_by_dir.items()
-                                   if r.startswith(d + "/")), "raw")
-            meta = {"id": core.new_id(kind, r), "kind": kind,
-                    "title": p.stem.replace("-", " ").replace("_", " "),
-                    "labels": _csv(a.label) or ["unsorted"],
-                    "summary": "", "status": "draft",
-                    "created": core.today(), "updated": core.today()}
-            if core.is_texty(p):
-                text = p.read_text(encoding="utf-8", errors="replace")
-                p.write_text(core.join_frontmatter(meta, text), encoding="utf-8")
-            else:
-                core.write_meta(p, meta)
-            print(f"labelled {r}  id={meta['id']}  kind={kind}")
-            made += 1
-    print(f"— {made} file(s) labelled", file=sys.stderr)
-    if made:
-        core.build()
-    return 0
-
-
-# ----------------------------------------------------------------- link ----
-
-def cmd_link(a) -> int:
-    g = core.build_graph()
-    if a.op == "build":
-        core.META.mkdir(exist_ok=True)
-        (core.META / "graph.json").write_text(
-            json.dumps(g, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"graph: {len(g['nodes'])} nodes, {len(g['edges'])} edges "
-              f"-> {core.rel(core.META / 'graph.json')}")
-        return 0
-
-    if a.op == "check":
-        stale = core.check_stale(g)
-        for s in stale:
-            print(f"STALE  {s.child_path:<44} ← {s.parent_path:<44} [{s.reason}]")
-        print(f"— {len(stale)} stale of {len(g['edges'])} edges", file=sys.stderr)
-        return 1 if stale else 0
-
-    if a.op in ("why", "impact"):
-        target = a.target
-        if target not in g["nodes"]:
-            target = core.id_for_path(target) or target
-        if target not in g["nodes"]:
-            raise SystemExit(f"error: no artifact for '{a.target}'")
-        ids = (core.ancestors(target, g) if a.op == "why"
-               else core.descendants(target, g))
-        head = "출처(ancestors)" if a.op == "why" else "영향받는 것(descendants)"
-        print(f"{target}  {g['nodes'][target]['title']}\n{head}:")
-        for i in ids:
-            n = g["nodes"].get(i, {})
-            print(f"  {i:<20} {n.get('path','?'):<44} {n.get('title','')}")
-        if not ids:
-            print("  (없음)")
-        return 0
-
-    if a.op == "ack":
-        changed = core.repin(a.target, _csv(a.source) or None)
-        print(f"repinned {a.target}: " + (", ".join(changed) or "(nothing to do)"))
-        core.build()
-        return 0
-    return 2
-
-
-# ------------------------------------------------------------------ log ----
-
-def cmd_log(a) -> int:
-    if a.op == "add":
-        e = core.log_add(a.kind, a.title, a.body or "", _csv(a.ref), _csv(a.label))
-        print(f"logged [{e['kind']}] {e['title']}")
-        core.build()                       # digest + STATE auto block follow
-        return 0
-    return cmd_ctx(argparse.Namespace(what="log", n=a.n, months=3, kind=None,
-                                      grep=None, ref=None, json=False))
-
-
-# ---------------------------------------------------------- build/check ----
 
 def cmd_build(a) -> int:
-    changed = core.build(write=not a.dry_run)
-    for c in changed:
-        print(("would update " if a.dry_run else "updated ") + c)
-    if not changed:
-        print("everything already current")
-    return 1 if (a.dry_run and changed) else 0
+    import 생성
+    r = 뿌리(); c = 공통.설정(r)
+    if a.검사:
+        문제 = 생성.다른것(r, c)
+        print("\n".join(문제) if 문제 else "생성 파일이 전부 원본과 같다")
+        return 1 if 문제 else 0
+    한것 = 생성.만들기(r, c)
+    print("다시 만들었다: " + ", ".join(한것) if 한것 else "바뀐 것이 없다")
+    return 0
 
 
 def cmd_check(a) -> int:
-    ctx = {"stage": "stop", "tool_name": None, "tool_input": {}, "cwd": str(core.ROOT)}
-    bad = 0
-    for stage in ("stop",):
-        for v in core.evaluate(stage, ctx):
-            bad += v.action == "deny"
-            print(f"[{v.action.upper()}] {v.rule_id} {v.title}\n{v.detail}\n")
-    print("OK — every mechanical rule passes" if not bad
-          else f"{bad} blocking problem(s)", file=sys.stderr)
-    return 1 if bad else 0
+    import 기계
+    r = 뿌리(); c = 공통.설정(r)
+    문제 = 기계.커밋검사(r, c) if a.커밋 else 기계.지금검사(r, c)
+    if a.커밋 and not 문제:
+        문제 += 문서판정(r, c)
+    if 문제:
+        print("걸린 것:\n" + "\n".join("- " + x for x in 문제))
+        return 1
+    print("걸리는 것이 없다")
+    return 0
 
 
-# ----------------------------------------------------------------- main ----
+def 문서판정(r: Path, c: dict) -> list[str]:
+    """커밋 직전 — 스테이지된 주제 파일의 새 줄을 「고칠 때」 규칙으로 판정한다."""
+    import 판정, 표시
+    if os.environ.get("OPS_판정") == "off" or c["판정"].get("끄기"):
+        return []
+    줄들 = []
+    옛 = 공통.옛줄전부(r, c)
+    for p in 공통.주제파일들(r, c):
+        rr = 공통.rel(r, p)
+        if not 공통.git(r, "diff", "--cached", "--name-only", "--", rr):
+            continue
+        글 = 공통.git(r, "show", f":{rr}").split("\n")
+        번호 = 표시.새줄들(r, rr, 스테이지=True) if 공통.git(r, "ls-files", "--error-unmatch", "--", rr) else set(range(1, len(글) + 1))
+        for i in sorted(번호):
+            if 0 < i <= len(글) and 글[i - 1].strip() and 글[i - 1].strip() not in 옛:
+                줄들.append(f"{rr}:{i}: {글[i - 1]}")
+    if not 줄들:
+        return []
+    규칙 = 판정.규칙글(r, "고칠 때")
+    if not 규칙:
+        return []
+    어긴것, 오류 = 판정.부르기(r, 판정.물음("", "\n".join(줄들), 규칙, [], [], "문서"), c)
+    if 오류:
+        print(f"(문서 판정을 못 했다: {오류} — 기계 규칙만 봤다)", file=sys.stderr)
+        return []
+    for x in 어긴것:
+        공통.횟수추가(r, "판정", x["규칙"], x["문장"][:80])
+    return [f"판정 — 규칙 {x['규칙']}: {x['문장']}" + (f" — {x['이유']}" if x["이유"] else "") for x in 어긴것]
 
-def main() -> int:
-    ap = argparse.ArgumentParser(prog="ops", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("ctx", help="session card / log query")
-    p.add_argument("what", nargs="?", default="log", choices=["card", "log"])
-    p.add_argument("-n", type=int, default=15)
-    p.add_argument("--months", type=int, default=3)
-    p.add_argument("--kind"); p.add_argument("--grep"); p.add_argument("--ref")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(fn=cmd_ctx)
+def cmd_ack(a) -> int:
+    import 어긋남
+    print(어긋남.ack(뿌리(), a.파생물, a.그대로))
+    return 0
 
-    p = sub.add_parser("find", help="locate artifacts by label/kind/text")
-    p.add_argument("--label"); p.add_argument("--kind"); p.add_argument("--text")
-    p.add_argument("--id"); p.add_argument("--json", action="store_true")
-    p.set_defaults(fn=cmd_find)
 
-    p = sub.add_parser("new", help="create an artifact with metadata + provenance")
-    p.add_argument("kind"); p.add_argument("path")
-    p.add_argument("--title", required=True)
-    p.add_argument("--label"); p.add_argument("--summary")
-    p.add_argument("--source", help="comma-separated ids this is DERIVED FROM")
-    p.add_argument("--body"); p.add_argument("--force", action="store_true")
-    p.set_defaults(fn=cmd_new)
+def cmd_출처(a) -> int:
+    import 어긋남
+    print(어긋남.새로만들기(뿌리(), a.파생물, a.출처))
+    return 0
 
-    p = sub.add_parser("ingest", help="label existing files that have no metadata")
-    p.add_argument("paths", nargs="*")
-    p.add_argument("--label"); p.add_argument("--kind")
-    p.set_defaults(fn=cmd_ingest)
 
-    p = sub.add_parser("link", help="derivation graph")
-    p.add_argument("op", choices=["build", "check", "why", "impact", "ack"])
-    p.add_argument("target", nargs="?")
-    p.add_argument("--source")
-    p.set_defaults(fn=cmd_link)
+def cmd_어긋남(a) -> int:
+    import 어긋남
+    r = 뿌리(); c = 공통.설정(r)
+    어긋남.만들기(r, c)
+    print((r / 어긋남.목록파일).read_text(encoding="utf-8"))
+    return 0
 
-    p = sub.add_parser("log", help="append to / read the machine log")
-    p.add_argument("op", choices=["add", "list"])
-    p.add_argument("--kind", default="work", choices=list(core.LOG_KINDS))
-    p.add_argument("--title", default=""); p.add_argument("--body")
-    p.add_argument("--ref"); p.add_argument("--label")
-    p.add_argument("-n", type=int, default=15)
-    p.set_defaults(fn=cmd_log)
 
-    p = sub.add_parser("build", help="regenerate every derived file")
-    p.add_argument("--dry-run", action="store_true")
-    p.set_defaults(fn=cmd_build)
+def cmd_log(a) -> int:
+    r = 뿌리()
+    if a.what == "add":
+        p = 공통.로그추가(r, a.종류, a.제목, a.본문 or "", a.참조 or None)
+        print(f"{공통.rel(r, p)} 에 적었다")
+        return 0
+    for e in 공통.로그읽기(r, a.n):
+        때 = str(e.get("때") or e.get("ts") or "")[:16]
+        print(f"{때} {e.get('종류') or e.get('kind','')}: {e.get('제목') or e.get('title','')}")
+    return 0
 
-    p = sub.add_parser("check", help="run every mechanical rule now")
-    p.set_defaults(fn=cmd_check)
 
-    a = ap.parse_args()
-    if a.cmd == "log" and a.op == "add" and not a.title:
-        ap.error("log add needs --title")
-    if a.cmd == "link" and a.op in ("why", "impact", "ack") and not a.target:
-        ap.error(f"link {a.op} needs a target (id or path)")
-    return a.fn(a)
+def cmd_횟수(a) -> int:
+    r = 뿌리()
+    if a.본인:
+        공통.횟수추가(r, "본인", a.본인, a.어디 or "")
+        print(f"적었다: 본인 · {a.본인}")
+        return 0
+    항 = 공통.횟수요약(r)
+    if not 항:
+        print("적힌 횟수가 없다")
+        return 0
+    print("| 주 | 누가·규칙 | 횟수 |\n|---|---|---|")
+    for 주, k, n in 항:
+        print(f"| {주} | {k} | {n} |")
+    return 0
+
+
+def cmd_판정(a) -> int:
+    import 판정
+    r = 뿌리(); c = 공통.설정(r)
+    if a.문서:
+        문제 = 문서판정(r, c)
+        print("\n".join(문제) if 문제 else "걸린 것이 없다")
+        return 1 if 문제 else 0
+    if a.글:
+        import 낱말
+        답 = Path(a.글).read_text(encoding="utf-8")
+        후보 = 낱말.후보(답, 낱말.아는말(r, c, [], set()))     # 대화가 없으니 사용자의 말 없이 레포 문서와 허용 목록만으로 거른다
+        어긴것, 오류 = 판정.부르기(r, 판정.물음("(손으로 돌린 판정 — 요청은 없다. 요청이 없다는 것으로는 판정하지 않는다)", 답, 판정.규칙글(r, "답할 때"), [], 후보[:60], "답"), c)
+        if 오류:
+            print(오류); return 1
+        print(판정.되돌리는말(어긴것) if 어긴것 else "걸린 것이 없다")
+        return 1 if 어긴것 else 0
+    print("--문서 또는 --글 <파일> 을 준다")
+    return 1
+
+
+def cmd_rules(a) -> int:
+    import 기계
+    r = 뿌리()
+    print("기계 규칙 (ops/rules/기계.yml)\n")
+    print(기계.보이기(r))
+    문제 = 기계.대장검사(r)
+    if 문제:
+        print("\n대장에 빠진 것:\n" + "\n".join("- " + x for x in 문제))
+    print("\n판단 규칙은 ops/rules/판단.md 에 있다. 「고칠 때」는 Edit · Write 직전에, 「답할 때」는 답 끝의 판정에 들어간다.")
+    return 0
+
+
+def cmd_worklog(a) -> int:
+    import 작업로그
+    n = 작업로그.만들기(뿌리())
+    print(f"worklog.md 를 다시 만들었다 ({n})" if n else "worklog.md 가 그대로다")
+    return 0
+
+
+def cmd_hook(a) -> int:
+    import 훅
+    return 훅.돌리기(a.자리, 뿌리())
+
+
+def cmd_hooks(a) -> int:
+    import 훅
+    if a.route:
+        return 훅.라우트(_자리이름(a.route), Path(a.위 or os.getcwd()))
+    r = 뿌리()
+    if a.push:
+        return push검사(r)
+    if a.설치:
+        공통.git(r, "config", "core.hooksPath", "ops/hooks")
+        for h in ("pre-commit", "pre-push"):
+            (r / "ops/hooks" / h).chmod(0o755)
+        print("git 훅을 걸었다: core.hooksPath = ops/hooks")
+    hp = 공통.git(r, "config", "core.hooksPath")
+    print(f"git 훅: {'돈다 (core.hooksPath = ops/hooks)' if hp == 'ops/hooks' else '안 돈다 — ops hooks --설치'}")
+    s = r / ".claude/settings.json"
+    print(f"세션 훅: {'settings.json 이 있다' if s.is_file() else '.claude/settings.json 이 없다'} — 세션을 이 레포에서 열어야 돈다. "
+          "레포 여럿 위에서 열었으면 ~/.claude/route.sh 가 `ops hooks --route` 로 넘긴다")
+    return 0
+
+
+def _자리이름(x: str) -> str:
+    return {"SessionStart": "session_start", "UserPromptSubmit": "user_prompt_submit", "PreToolUse": "pre_tool_use",
+            "PostToolUse": "post_tool_use", "Stop": "stop"}.get(x, x)
+
+
+def push검사(r: Path) -> int:
+    """pre-push — stdin 의 <local ref> <local sha> <remote ref> <remote sha> 줄에서 삭제와 비-fast-forward 를 막는다."""
+    막힘 = []
+    for ln in sys.stdin.read().splitlines():
+        부분 = ln.split()
+        if len(부분) != 4:
+            continue
+        lref, lsha, rref, rsha = 부분
+        if set(lsha) == {"0"}:
+            막힘.append(f"{rref} 를 지우는 push 다")
+        elif set(rsha) != {"0"}:
+            import subprocess
+            x = subprocess.run(["git", "-C", str(r), "merge-base", "--is-ancestor", rsha, lsha], capture_output=True)
+            if x.returncode == 1:
+                막힘.append(f"{rref} 의 이력을 다시 쓰는 push 다 (원격 {rsha[:7]} 이 {lsha[:7]} 의 조상이 아니다)")
+    if 막힘:
+        print("push 를 막았다:\n" + "\n".join("- " + x for x in 막힘), file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="ops", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sp = ap.add_subparsers(dest="cmd")
+    x = sp.add_parser("build"); x.add_argument("--검사", action="store_true"); x.set_defaults(f=cmd_build)
+    x = sp.add_parser("check"); x.add_argument("--커밋", action="store_true"); x.set_defaults(f=cmd_check)
+    x = sp.add_parser("ack"); x.add_argument("파생물"); x.add_argument("--그대로", default=None); x.set_defaults(f=cmd_ack)
+    x = sp.add_parser("출처"); x.add_argument("파생물"); x.add_argument("출처", nargs="+"); x.set_defaults(f=cmd_출처)
+    x = sp.add_parser("어긋남"); x.set_defaults(f=cmd_어긋남)
+    x = sp.add_parser("log"); x.add_argument("what", choices=["add", "list"]); x.add_argument("--종류", default="work")
+    x.add_argument("--제목", default=""); x.add_argument("--본문", default=""); x.add_argument("--참조", nargs="*")
+    x.add_argument("-n", type=int, default=20); x.set_defaults(f=cmd_log)
+    x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.set_defaults(f=cmd_횟수)
+    x = sp.add_parser("판정"); x.add_argument("--문서", action="store_true"); x.add_argument("--글", default=None); x.set_defaults(f=cmd_판정)
+    x = sp.add_parser("rules"); x.set_defaults(f=cmd_rules)
+    x = sp.add_parser("worklog"); x.set_defaults(f=cmd_worklog)
+    x = sp.add_parser("hook"); x.add_argument("자리", choices=["session_start", "user_prompt_submit", "pre_tool_use", "post_tool_use", "stop"]); x.set_defaults(f=cmd_hook)
+    x = sp.add_parser("hooks"); x.add_argument("--설치", action="store_true"); x.add_argument("--push", action="store_true")
+    x.add_argument("--route", default=None); x.add_argument("--위", default=None); x.set_defaults(f=cmd_hooks)
+    a = ap.parse_args(argv)
+    if not a.cmd:
+        ap.print_help(); return 0
+    if a.cmd == "log" and a.what == "add" and not a.제목:
+        print("--제목 이 필요하다"); return 1
+    return a.f(a)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import signal
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)      # `ops rules | head` 가 되게
+    sys.exit(main(sys.argv[1:]))

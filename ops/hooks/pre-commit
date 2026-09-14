@@ -1,0 +1,5 @@
+#!/bin/sh
+# 커밋 직전 — 스테이지된 것에서 기계 규칙(표시 · 상대 날짜 · 생성 파일 · 크기)과 문서 판정을 본다.
+# 논리는 ops/lib/기계.py 와 ops/bin/ops 의 check --커밋 이다. 판정만 끄려면 OPS_판정=off, 훅을 고칠 때만 OPS_HOOKS=off.
+[ "$OPS_HOOKS" = "off" ] && exit 0
+exec python3 "$(git rev-parse --show-toplevel)/ops/bin/ops" check --커밋
