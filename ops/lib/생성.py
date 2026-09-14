@@ -57,6 +57,22 @@ def 생성파일인가(뿌리: Path, p: Path | str, c: dict | None = None) -> bo
     return r in ("STATUS.md", "README.md", "worklog.md", "memory/어긋남.md")
 
 
+def 생성파일설명(뿌리: Path, p: Path | str, c: dict | None = None) -> str:
+    """그 파일이 어디서 만들어지고, 대신 무엇을 고쳐야 하는가 — 막는 말에 붙인다."""
+    c = c or 설정(뿌리)
+    r = rel(뿌리, p)
+    절 = c["지금절"]["제목"]
+    if r == "STATUS.md":
+        return f"STATUS.md 는 스크립트가 주제 파일마다의 「{절}」 절에서 만든다. 손으로 고치지 않는다. 바꾸려는 줄이 든 주제 파일의 「{절}」 절을 고치고 `ops build` 를 돌린다."
+    if r == "README.md":
+        return f"README.md 는 스크립트가 .ops.yml 의 소개 칸과 주제 파일마다의 「{절}」 절 첫 줄에서 만든다. 손으로 고치지 않는다. 소개는 .ops.yml 에서, 첫 줄은 그 주제 파일의 「{절}」 절에서 고치고 `ops build` 를 돌린다."
+    if r == "worklog.md":
+        return "worklog.md 는 스크립트가 git log 에서 만든다. 손으로 고치지 않고 커밋하지 않는다. 적을 것은 커밋 메시지 첫 줄에 적는다."
+    if r == "memory/어긋남.md":
+        return "memory/어긋남.md 는 스크립트가 파생물 옆 파일(<파생물>.meta.yml)과 출처 파일에서 만든다. 손으로 고치지 않는다. 항을 지우려면 파생물을 고치고 `ops ack <파생물>` 을 돌린다."
+    return f"{r} 는 스크립트가 만든다. 손으로 고치지 않는다. 원본을 고치고 `ops build` 를 돌린다."
+
+
 def 다른것(뿌리: Path, c: dict | None = None) -> list[str]:
     """원본과 다른 생성 파일의 이름."""
     c = c or 설정(뿌리)

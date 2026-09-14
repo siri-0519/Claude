@@ -50,7 +50,8 @@ def cmd_check(a) -> int:
     if a.커밋 and not 문제:
         문제 += 문서판정(r, c)
     if 문제:
-        print("걸린 것:\n" + "\n".join("- " + x for x in 문제))
+        머리 = "커밋 전에 걸렸다. 항마다 적힌 대로 고치고 다시 커밋한다:" if a.커밋 else "지금 걸리는 것 (항마다 적힌 대로 고친다):"
+        print(머리 + "\n" + "\n".join("- " + x for x in 문제))
         return 1
     print("걸리는 것이 없다")
     return 0
@@ -83,7 +84,9 @@ def 문서판정(r: Path, c: dict) -> list[str]:
         return []
     for x in 어긴것:
         공통.횟수추가(r, "판정", x["규칙"], x["문장"][:80])
-    return [f"판정 — 규칙 {x['규칙']}: {x['문장']}" + (f" — {x['이유']}" if x["이유"] else "") for x in 어긴것]
+    이름 = 판정.규칙이름들(r)
+    return [f"판정(다른 모델이 판단 규칙으로 본 것) — 규칙 {x['규칙']}" + (f"({이름[x['규칙']]})" if x['규칙'] in 이름 else "")
+            + f": {x['문장']}" + (f" — {x['이유']}" if x["이유"] else "") + ". 그 줄을 고치고 다시 커밋한다" for x in 어긴것]
 
 
 def cmd_ack(a) -> int:
@@ -148,7 +151,7 @@ def cmd_판정(a) -> int:
         어긴것, 오류 = 판정.부르기(r, 판정.물음("(손으로 돌린 판정 — 요청은 없다. 요청이 없다는 것으로는 판정하지 않는다)", 답, 판정.규칙글(r, "답할 때"), [], 후보[:60], "답"), c)
         if 오류:
             print(오류); return 1
-        print(판정.되돌리는말(어긴것) if 어긴것 else "걸린 것이 없다")
+        print(판정.되돌리는말(어긴것, r) if 어긴것 else "걸린 것이 없다")
         return 1 if 어긴것 else 0
     print("--문서 또는 --글 <파일> 을 준다")
     return 1
@@ -212,14 +215,15 @@ def push검사(r: Path) -> int:
             continue
         lref, lsha, rref, rsha = 부분
         if set(lsha) == {"0"}:
-            막힘.append(f"{rref} 를 지우는 push 다")
+            막힘.append(f"{rref} 를 지우는 push 다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다")
         elif set(rsha) != {"0"}:
             import subprocess
             x = subprocess.run(["git", "-C", str(r), "merge-base", "--is-ancestor", rsha, lsha], capture_output=True)
             if x.returncode == 1:
-                막힘.append(f"{rref} 의 이력을 다시 쓰는 push 다 (원격 {rsha[:7]} 이 {lsha[:7]} 의 조상이 아니다)")
+                막힘.append(f"{rref} 의 이력을 다시 쓰는 push 다. 원격의 커밋 {rsha[:7]} 이 보내려는 {lsha[:7]} 에 들어 있지 않아서 원격 커밋이 사라진다. "
+                            "먼저 `git pull --no-rebase` 로 원격을 합친 뒤 보통 push 를 한다")
     if 막힘:
-        print("push 를 막았다:\n" + "\n".join("- " + x for x in 막힘), file=sys.stderr)
+        print("push 를 막았다. 이 push 는 포기한다:\n" + "\n".join("- " + x for x in 막힘), file=sys.stderr)
         return 1
     return 0
 

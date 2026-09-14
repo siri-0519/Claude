@@ -70,7 +70,7 @@ def 상대날짜_새줄(글: str, c: dict, 옛글: str = "") -> list[str]:
             continue
         걸린 = 상대날짜(ln, c)
         if 걸린:
-            문제.append(f"{i}줄: {' '.join(걸린)} — 날짜로 적는다: {ln.strip()[:50]}")
+            문제.append(f"{i}줄: {' '.join(걸린)} — 오늘 날짜에서 센 날짜로 적는다: {ln.strip()[:50]}")
     return 문제
 
 
@@ -82,11 +82,12 @@ def 목차크기(뿌리: Path, c: dict, 글: str | None = None) -> list[str]:
         글 = p.read_text(encoding="utf-8")
     줄수 = len(글.split("\n"))
     문제 = []
+    방법 = "내용을 그 주제 파일로 옮기고 목차에는 「이런 말이 나오면 이 파일을 읽는다」 한 줄만 남긴다"
     if 줄수 > int(c["목차최대줄"]):
-        문제.append(f"CLAUDE.md 가 {줄수}줄이다. {c['목차최대줄']}줄 안으로 줄인다")
+        문제.append(f"CLAUDE.md 가 {줄수}줄이다. {c['목차최대줄']}줄 안으로 줄인다. {방법}")
     for 수준, 제목, s, e in 절나누기(글):
         if 수준 == 2 and e - s > int(c["절최대줄"]):
-            문제.append(f"CLAUDE.md 의 「{제목}」 절이 {e - s}줄이다. {c['절최대줄']}줄 안으로 줄인다")
+            문제.append(f"CLAUDE.md 의 「{제목}」 절(그 제목부터 다음 제목 앞까지)이 {e - s}줄이다. {c['절최대줄']}줄 안으로 줄인다. {방법}")
     return 문제
 
 
@@ -96,7 +97,7 @@ def 파일크기(뿌리: Path, c: dict) -> list[str]:
     for p in 주제파일들(뿌리, c):
         n = p.stat().st_size
         if n > 최대:
-            문제.append(f"{rel(뿌리, p)} 가 {n} 바이트다. {최대} 바이트 안으로 절을 나눈다")
+            문제.append(f"{rel(뿌리, p)} 가 {n} 바이트다. {최대} 바이트 안으로 줄인다. 절을 나눠 다른 파일로 옮기고 목차에 그 파일을 한 줄 더한다")
     return 문제
 
 
@@ -111,7 +112,7 @@ def 브랜치(뿌리: Path, c: dict) -> list[str]:
     문제 = []
     상태 = [x for x in git(뿌리, "status", "--porcelain").split("\n") if x.strip()]
     if 상태:
-        문제.append(f"커밋 안 한 변경이 {len(상태)}개 있다: " + " ".join(x[3:] for x in 상태[:5]))
+        문제.append(f"커밋 안 한 변경이 {len(상태)}개 있다 (스크립트가 만든 STATUS.md · README.md 도 그대로 커밋한다): " + " ".join(x[3:] for x in 상태[:5]))
     가지 = git(뿌리, "rev-parse", "--abbrev-ref", "HEAD")
     if 가지 and 가지 != "HEAD":
         if not git(뿌리, "rev-parse", "--verify", "-q", f"origin/{가지}"):
@@ -133,9 +134,10 @@ def 셸검사(명령: str, 뿌리: Path, c: dict) -> list[str]:
     # heredoc 본문(cat > 파일 <<'EOF' … EOF)은 파일 내용이지 명령이 아니다 — 시험 코드의 글자가 걸렸다 (2026-09-14)
     명령 = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1(?:\n|$)", "<<HEREDOC\n", 명령, flags=re.S)
     if re.search(r"\bgit\b[^|;&]*\bpush\b[^|;&]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s--delete\b|\s-d\b|\s\+\S|\s:\S)", 명령):
-        문제.append("이력을 다시 쓰거나 원격 브랜치를 지우는 push 다. 하지 않는다")
+        문제.append("이력을 다시 쓰거나 원격 브랜치를 지우는 push(--force · --delete · :브랜치)다. 하지 않는다. "
+                    "원격과 다르면 먼저 `git pull --no-rebase` 로 합친 뒤 보통 push 를 한다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다")
     if re.search(r"\bgit\b[^|;&]*\b(filter-branch|filter-repo)\b", 명령):
-        문제.append("이력을 다시 쓰는 명령이다. 하지 않는다")
+        문제.append("이력을 다시 쓰는 명령(filter-branch · filter-repo)이다. 하지 않는다. 이미 있는 커밋은 그대로 두고 새 커밋으로 고친다")
     m = re.search(r"\brm\b\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b(.*)", 명령)
     if m:
         for w in m.group(2).split():
@@ -144,13 +146,14 @@ def 셸검사(명령: str, 뿌리: Path, c: dict) -> list[str]:
                 continue
             base = w2.split("/")[0] if not w2.startswith("/") else rel(뿌리, w2).split("/")[0]
             if w2 in (".", "*", "/") or base in 보호자리 or rel(뿌리, w2) in 보호자리:
-                문제.append(f"기계({w2})를 통째로 지우는 명령이다. 파일 이름을 대고 git rm 으로 지운다")
+                문제.append(f"기계({w2} — ops/ · .claude/ · memory/ · .ops.yml 이 기계다)를 통째로 지우는 명령이다. 하지 않는다. "
+                            "지울 파일이 있으면 이름을 하나씩 대고 `git rm <파일>` 로 지운다")
     for m in re.finditer(r"(?:>>?|\btee\b(?:\s+-a)?)\s*([\w./~-]+)", 명령):
         if 생성.생성파일인가(뿌리, m.group(1)):
-            문제.append(f"{m.group(1)} 는 스크립트가 만든다. 원본을 고치고 `ops build` 를 돌린다")
+            문제.append(생성.생성파일설명(뿌리, m.group(1), c) + " 셸로 덮어쓰지 않는다.")
     for m in re.finditer(r"\bsed\b\s+-i[^|;&]*?\s([\w./~-]+\.md)\b", 명령):
         if 생성.생성파일인가(뿌리, m.group(1)):
-            문제.append(f"{m.group(1)} 는 스크립트가 만든다. 원본을 고치고 `ops build` 를 돌린다")
+            문제.append(생성.생성파일설명(뿌리, m.group(1), c) + " sed 로 고치지 않는다.")
     return 문제
 
 

@@ -34,7 +34,8 @@ def 돌리기(자리: str, 뿌리: Path) -> int:
     except SystemExit:
         raise
     except Exception:  # noqa: BLE001 — 훅이 세션을 죽이면 안 된다
-        print(f"[훅 {자리}] 예상 못 한 오류 — 검사가 안 돌았다:\n" + traceback.format_exc()[-600:], file=sys.stderr)
+        print(f"[훅 {자리}] 훅이 오류로 죽었다. 막지 않았고 이번 호출에는 검사가 안 걸렸다. 훅(ops/lib/훅.py)을 고치거나 사용자에게 알린다. 오류:\n"
+              + traceback.format_exc()[-600:], file=sys.stderr)
         return 0
 
 
@@ -42,13 +43,14 @@ def 돌리기(자리: str, 뿌리: Path) -> int:
 
 def 레포상태줄(뿌리: Path, c: dict) -> str:
     가지 = git(뿌리, "rev-parse", "--abbrev-ref", "HEAD")
-    head = git(뿌리, "log", "-1", "--format=%h %s")
+    head = git(뿌리, "log", "-1", "--format=%h")
+    제목 = git(뿌리, "log", "-1", "--format=%s")
     변경 = len([x for x in git(뿌리, "status", "--porcelain").split("\n") if x.strip()])
-    줄 = f"레포 {c['이름']}: 브랜치 {가지} / HEAD {head}"
+    줄 = f"레포 {c['이름']}: 브랜치 {가지} / 마지막 커밋 {head} (메시지 첫 줄: {제목})"
     if 변경:
-        줄 += f" / 커밋 안 한 변경 {변경}개"
+        줄 += f" / 커밋 안 한 변경 {변경}개 — git status 로 보고 이번 답 안에 커밋한다"
     if 가지 and 가지 != "HEAD" and not git(뿌리, "rev-parse", "--verify", "-q", f"origin/{가지}"):
-        줄 += " / 이 브랜치는 아직 원격에 없다"
+        줄 += f" / 이 브랜치는 아직 원격에 없다 — git push -u origin {가지}"
     return 줄
 
 
@@ -59,9 +61,10 @@ def 세션시작(뿌리: Path, c: dict, p: dict) -> int:
         git(뿌리, "config", "core.hooksPath", "ops/hooks")
     작업로그.만들기(뿌리)
     어긋남.만들기(뿌리, c)
-    _, 열쇠들 = 어긋남.목록(뿌리, c)
+    _, 열쇠들, _ = 어긋남.목록(뿌리, c)
     상태쓰기(뿌리, 세션파일, {"시작": 지금시각(), "어긋남": 열쇠들, "되돌림": 0, "규칙넣음": []})
-    글 = [레포상태줄(뿌리, c), f"고친 것은 커밋하고 이 세션의 브랜치로 push 한다. 기본 브랜치는 {c['기본브랜치']} 다.", ""]
+    글 = [레포상태줄(뿌리, c),
+          f"고친 것은 이 세션의 브랜치로 커밋하고 push 한다. 기본 브랜치는 {c['기본브랜치']} 다. 답이 끝날 때 훅이 커밋 · push 를 확인한다.", ""]
     목록 = (뿌리 / 어긋남.목록파일).read_text(encoding="utf-8") if (뿌리 / 어긋남.목록파일).is_file() else ""
     if 열쇠들:
         글.append(목록.strip())
@@ -69,7 +72,7 @@ def 세션시작(뿌리: Path, c: dict, p: dict) -> int:
         글.append("어긋남 목록(memory/어긋남.md)은 비어 있다.")
     if p.get("source") in ("compact", "resume"):
         글.append("")
-        글.append("대화가 요약으로 접혔다. 이 세션에 읽은 파일은 문맥에 없다. 주제 파일은 답하기 전에 다시 읽는다.")
+        글.append("대화가 요약으로 접혔다. 요약 앞에서 읽은 파일은 문맥에 없다. 이번 물음에 걸리는 주제 파일(CLAUDE.md 「언제 무엇을 읽나」 표의 파일)을 답하기 전에 다시 읽는다.")
     문맥출력("session_start", "\n".join(글))
     return 0
 
@@ -80,15 +83,21 @@ def 어긋남개수(뿌리: Path, c: dict, 다시: bool = False) -> tuple[int, i
     import 어긋남
     if 다시:
         어긋남.만들기(뿌리, c)
-    _, 열쇠들 = 어긋남.목록(뿌리, c)
+    _, 열쇠들, _ = 어긋남.목록(뿌리, c)
     옛 = set(상태읽기(뿌리, 세션파일).get("어긋남") or [])
     return len(열쇠들), len([k for k in 열쇠들 if k not in 옛])
+
+
+def 어긋남한줄(n: int, m: int) -> str:
+    if m:
+        return f"어긋남 {n}개, 이번 세션에 새로 {m}개 — 새로 오른 것은 이번 답에서 고치거나 ops ack 한다. 이름은 memory/어긋남.md 에 있다."
+    return f"어긋남 {n}개, 이번 세션에 새로 없음 (memory/어긋남.md)"
 
 
 def 물음직전(뿌리: Path, c: dict, p: dict) -> int:
     n, m = 어긋남개수(뿌리, c)
     if n:
-        문맥출력("user_prompt_submit", f"어긋남 {n}개, 이번 세션에 새로 {m}개 (memory/어긋남.md)")
+        문맥출력("user_prompt_submit", 어긋남한줄(n, m))
     return 0
 
 
@@ -138,7 +147,7 @@ def 도구직전(뿌리: Path, c: dict, p: dict) -> int:
     except ValueError:
         return 0                                   # 이 레포 밖
     if 생성.생성파일인가(뿌리, r):
-        return 막기(f"{r} 는 스크립트가 만든다. 손으로 고치지 않는다. 원본(주제 파일의 「{c['지금절']['제목']}」 절 · git log · 사이드카)을 고치고 `ops build` 를 돌린다.")
+        return 막기(생성.생성파일설명(뿌리, r, c))
     지금글 = q.read_text(encoding="utf-8") if q.is_file() else ""
     새글 = _새글(뿌리, p, 지금글)
     if 새글 is None:
@@ -146,7 +155,9 @@ def 도구직전(뿌리: Path, c: dict, p: dict) -> int:
     if 지금글 and 생성.블록이름들(지금글):
         for b in 생성.블록이름들(지금글):
             if 생성.블록읽기(지금글, b) != 생성.블록읽기(새글, b):
-                return 막기(f"{r} 의 생성 블록 「{b}」 안은 손으로 고치지 않는다. 원본을 고치고 `ops build` 를 돌린다.")
+                return 막기(f"{r} 의 「{b}」 블록(<!-- BEGIN GENERATED: {b} --> 와 <!-- END GENERATED: {b} --> 사이)은 스크립트가 "
+                          f".ops.yml 의 목차 칸과 주제 파일마다의 「{c['지금절']['제목']}」 절 첫 줄에서 만든다. 그 사이는 손으로 고치지 않는다. "
+                          f"블록 밖은 고쳐도 된다. 표 내용을 바꾸려면 .ops.yml 의 목차 칸이나 그 주제 파일의 「{c['지금절']['제목']}」 절을 고치고 `ops build` 를 돌린다.")
     if r == "CLAUDE.md":
         문제 = 기계.목차크기(뿌리, c, 새글)
         if 문제:
@@ -159,14 +170,15 @@ def 도구직전(뿌리: Path, c: dict, p: dict) -> int:
     문제 = [f"{r} {x}" for x in 기계.상대날짜_새줄(새글, c, 옛)]
     문제 += [f"{r} {x}" for x in 표시.검사_글(새글, c, 옛)]
     if 문제:
-        return 막기("저장하기 전에 걸렸다. 그 줄만 고쳐서 다시 저장한다.\n" + "\n".join(문제))
+        return 막기("저장하기 전에 걸렸다. 아래 줄만 고쳐서 같은 저장을 다시 한다. 다른 줄은 손대지 않는다.\n" + "\n".join(문제))
     s = 상태읽기(뿌리, 세션파일)
     if "고칠 때" not in (s.get("규칙넣음") or []):
         규칙 = 판정.규칙글(뿌리, "고칠 때")
         if 규칙:
             s.setdefault("규칙넣음", []).append("고칠 때")
             상태쓰기(뿌리, 세션파일, s)
-            문맥출력("pre_tool_use", "문서를 고칠 때의 판단 규칙이다. 이 세션에 한 번만 넣는다.\n\n" + 규칙)
+            문맥출력("pre_tool_use", "문서를 고칠 때의 판단 규칙이다. 판단 규칙은 스크립트가 못 보고 다른 모델이 판정하는 규칙이다. "
+                     "이 세션에 지금 한 번만 넣으니, 이번 저장과 이 세션의 다음 저장에도 적용한다.\n\n" + 규칙)
     return 0
 
 
@@ -180,14 +192,16 @@ def 도구직후(뿌리: Path, c: dict, p: dict) -> int:
         return 0
     import 어긋남
     어긋남.만들기(뿌리, c)
-    _, 열쇠들 = 어긋남.목록(뿌리, c)
+    _, 열쇠들, 항줄 = 어긋남.목록(뿌리, c)
     s = 상태읽기(뿌리, 세션파일)
     본것 = set(s.get("알린것") or []) | set(s.get("어긋남") or [])
     새로 = [k for k in 열쇠들 if k not in 본것]
     if 새로:
         s.setdefault("알린것", []).extend(새로)
         상태쓰기(뿌리, 세션파일, s)
-        문맥출력("post_tool_use", "어긋남 목록에 새로 올랐다 (막지 않는다. 고쳤으면 `ops ack`):\n" + "\n".join("- " + k for k in 새로))
+        문맥출력("post_tool_use", "방금 고친 파일 때문에 어긋남 목록에 새로 올랐다 (막지 않는다):\n" + "\n".join(항줄.get(k, "- " + k) for k in 새로)
+                 + "\n이번 답 안에서 파생물을 바뀐 절에 맞춰 고치고 `ops ack <파생물>` 을 돌리거나, 고칠 것이 없으면 `ops ack <파생물> --그대로 \"<이유>\"` 를 돌린다. "
+                   "브랜치 · 폐기된 번호 · 생성 파일 항은 memory/어긋남.md 의 그 절에 적힌 대로 한다.")
     return 0
 
 
@@ -206,7 +220,7 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
         걸린 = 기계.상대날짜(답, c)
         if 걸린:
             횟수추가(뿌리, "기계", "상대날짜")
-            return 막기(f"답에 상대 날짜가 있다: {' '.join(걸린)} — 날짜로 바꾼다. 그 자리만 고치고 답 전체를 다시 붙이지 않는다.")
+            return 막기(f"답에 상대 날짜가 있다: {' '.join(걸린)} — 오늘 날짜에서 센 날짜로 바꾼다. 그 낱말이 든 문장만 고쳐서 그 부분만 다시 쓴다. 답 전체를 다시 붙이지 않는다.")
         규칙 = 판정.규칙글(뿌리, "답할 때")
         if 규칙 and len(답) > 80:
             후보 = 낱말.후보(답, 낱말.아는말(뿌리, c, d["사용자글"], set(d["읽은파일"])))
@@ -217,15 +231,15 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
             elif 어긴것:
                 for x in 어긴것:
                     횟수추가(뿌리, "판정", x["규칙"], x["문장"][:80])
-                return 막기(판정.되돌리는말(어긴것))
+                return 막기(판정.되돌리는말(어긴것, 뿌리))
     문제 = 기계.브랜치(뿌리, c)
     if 문제 and int(s.get("되돌림") or 0) < 2:
         s["되돌림"] = int(s.get("되돌림") or 0) + 1
         상태쓰기(뿌리, 세션파일, s)
-        return 막기("답을 끝내기 전에 커밋하고 push 한다.\n" + "\n".join("- " + x for x in 문제))
+        return 막기("답을 끝내기 전에 커밋하고 push 한다. 커밋 메시지 첫 줄은 이번 요청의 핵심이다.\n" + "\n".join("- " + x for x in 문제))
     n, m = 어긋남개수(뿌리, c, 다시=True)
     if n:
-        알림.append(f"어긋남 {n}개, 이번 세션에 새로 {m}개 (memory/어긋남.md)")
+        알림.append(어긋남한줄(n, m))
     if 알림:
         print(json.dumps({"systemMessage": " / ".join(알림)}, ensure_ascii=False))
     return 0

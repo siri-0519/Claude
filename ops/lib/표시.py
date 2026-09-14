@@ -64,6 +64,14 @@ def 새줄들(뿌리: Path, 경로: str, 기준: str = "HEAD", 스테이지: boo
     return 번호
 
 
+def 붙이는말(c: dict) -> str:
+    """어느 표시를 붙이라는 말 — 표시가 [확인] · [제안] 둘이면 누구의 말인지로, 아니면 목록으로."""
+    표 = list(c["표시"])
+    if sorted(표) == ["제안", "확인"]:
+        return "사용자가 말한 것이면 [확인], 내가 제안한 것이면 [제안] 을 줄 끝에 붙인다"
+    return "이 저장소의 표시(" + " · ".join("[" + t + "]" for t in 표) + ") 가운데 맞는 것을 줄 끝에 붙인다. 사용자가 말한 것과 내가 제안한 것을 가른다"
+
+
 def 검사_새줄(뿌리: Path, c: dict | None = None, 스테이지: bool = False) -> list[str]:
     """바뀐 주제 파일의 새 줄 가운데 표시 없는 주장 줄을 이름으로 짚는다."""
     c = c or 설정(뿌리)
@@ -84,7 +92,7 @@ def 검사_새줄(뿌리: Path, c: dict | None = None, 스테이지: bool = Fals
         for i, ln in 표시없는줄(글, c, 줄):
             if ln in 옛:
                 continue                           # 다른 파일에서 옮겨 온 줄
-            문제.append(f"{r} {i}줄에 표시가 없다: {ln[:60]}")
+            문제.append(f"{r} {i}줄에 표시가 없다 — {붙이는말(c)}: {ln[:60]}")
     return 문제
 
 
@@ -94,7 +102,7 @@ def 검사_글(글: str, c: dict, 옛글: str = "") -> list[str]:
     문제 = []
     for i, ln in 표시없는줄(글, c):
         if ln not in 옛줄:
-            문제.append(f"{i}줄에 표시가 없다: {ln[:60]}")
+            문제.append(f"{i}줄에 표시가 없다 — {붙이는말(c)}: {ln[:60]}")
     return 문제
 
 
@@ -117,5 +125,5 @@ def 제안이확인으로(뿌리: Path, c: dict | None = None, 스테이지: boo
             핵 = re.sub(r"\[(확인|제안)[^\]]*\]", "", ln).strip()
             for old in 뺀제안:
                 if re.sub(r"\[(확인|제안)[^\]]*\]", "", old).strip() == 핵:
-                    문제.append(f"{r}: [제안]이 [확인]으로 바뀌었다 — 사용자가 GitHub 웹에서 하는 커밋에서만 된다: {핵[:50]}")
+                    문제.append(f"{r}: [제안]이 [확인]으로 바뀌었다 — [제안]으로 되돌린다. [확인]으로 바꾸는 것은 사용자가 GitHub 웹에서 하는 커밋에서만 된다: {핵[:50]}")
     return 문제
