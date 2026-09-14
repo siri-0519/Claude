@@ -138,11 +138,11 @@ def 셸검사(명령: str, 뿌리: Path, c: dict) -> list[str]:
                     "원격과 다르면 먼저 `git pull --no-rebase` 로 합친 뒤 보통 push 를 한다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다. 사용자에게 그렇게 알린다")
     if re.search(r"\bgit\b[^|;&]*\b(filter-branch|filter-repo)\b", 명령):
         문제.append("이력을 다시 쓰는 명령(filter-branch · filter-repo)이다. 하지 않는다. 이미 있는 커밋은 그대로 두고 새 커밋으로 고친다")
-    m = re.search(r"\brm\b\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b(.*)", 명령)
-    if m:
+    # rm -r 의 대상은 그 명령 하나(&& · ; · | 앞까지)의 인자만 본다 — 뒤에 이어진 명령의 경로까지 보고 잘못 막았다 (2026-09-14 실측)
+    for m in re.finditer(r"\brm\b\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b([^|;&\n]*)", 명령):
         for w in m.group(2).split():
             w2 = w.strip("'\"").rstrip("/")
-            if w2.startswith("-"):
+            if w2.startswith("-") or "__pycache__" in w2:
                 continue
             base = w2.split("/")[0] if not w2.startswith("/") else rel(뿌리, w2).split("/")[0]
             if w2 in (".", "*", "/") or base in 보호자리 or rel(뿌리, w2) in 보호자리:

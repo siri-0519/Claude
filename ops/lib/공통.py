@@ -219,12 +219,11 @@ def 절나누기(글: str) -> list[tuple[int, str, int, int]]:
 
 
 def 옛줄전부(뿌리: Path, c: dict | None = None) -> set[str]:
-    """HEAD 에 있는 주제 파일 전부의 줄(양끝 공백을 뗀 것). 파일을 나누거나 옮겨도 이 줄들은 새 줄이 아니다."""
-    c = c or 설정(뿌리)
+    """HEAD 에 있는 .md 파일 전부의 줄(양끝 공백을 뗀 것). 파일을 나누거나 옮겨도 이 줄들은 새 줄이 아니다.
+    주제 파일만 보면 STATUS.md 처럼 제외된 파일에서 옮긴 줄이 새 줄로 잡힌다 (2026-09-14 me 2단계 실측)."""
     s: set[str] = set()
-    for p in 주제파일들(뿌리, c):
-        r = rel(뿌리, p)
-        if git(뿌리, "ls-files", "--error-unmatch", "--", r):
+    for r in git(뿌리, "ls-tree", "-r", "--name-only", "HEAD").split("\n"):
+        if r.endswith(".md"):
             s.update(x.strip() for x in git(뿌리, "show", f"HEAD:{r}").split("\n"))
     s.discard("")
     return s
