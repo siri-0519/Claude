@@ -358,19 +358,34 @@ def 라우트(자리: str, 위: Path) -> int:
     if not 할것:
         return 0
     시간 = 320 if 자리 == "stop" else 110
-    결과: list[tuple[Path, int, str, str]] = []
-    for r, cmd in 할것:
+
+    def 돌리기(r: Path, cmd) -> tuple[Path, int, str, str]:
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(r))
         try:
             x = subprocess.run(cmd, shell=isinstance(cmd, str), input=raw, text=True, capture_output=True,
                                cwd=str(r), env=env, timeout=시간)
         except subprocess.TimeoutExpired:
-            결과.append((r, 0, "", f"[훅] {r.name} {자리} 이 시간을 넘겼다\n"))
-            continue
+            return (r, 0, "", f"[훅] {r.name} {자리} 이 시간을 넘겼다\n")
         except OSError as e:
-            결과.append((r, 0, "", f"[훅] {r.name} {자리} 을 못 돌렸다 — {e}\n"))
-            continue
-        결과.append((r, x.returncode, x.stdout, x.stderr))
+            return (r, 0, "", f"[훅] {r.name} {자리} 을 못 돌렸다 — {e}\n")
+        return (r, x.returncode, x.stdout, x.stderr)
+
+    묶음별: dict[Path, list] = {}
+    for r, cmd in 할것:
+        묶음별.setdefault(r, []).append(cmd)
+    if 자리 == "stop" and len(묶음별) > 1:
+        # 답 끝은 레포마다 판정(haiku)을 불러 레포당 1~3분이다. 레포 넷을 차례로 돌리면 4분을 넘고, 그 사이에 플랫폼이
+        # 세션을 끈 일이 있었다 (2026-09-15 10:31 실측 — 훅이 251초 만에 끊겼다). 그래서 레포끼리는 동시에 돌리고,
+        # 한 레포 안의 명령은 차례를 지킨다. 레포가 다르면 건드리는 파일이 겹치지 않는다.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def 레포하나(r: Path) -> list:
+            return [돌리기(r, cmd) for cmd in 묶음별[r]]
+
+        with ThreadPoolExecutor(max_workers=len(묶음별)) as ex:
+            결과 = [x for 묶 in ex.map(레포하나, list(묶음별)) for x in 묶]
+    else:
+        결과 = [돌리기(r, cmd) for r, cmd in 할것]
     막힘 = [err for _r, rc, _o, err in 결과 if rc == 2]
     if 막힘:
         for _r, rc, _o, err in 결과:

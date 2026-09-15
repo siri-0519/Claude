@@ -1,0 +1,116 @@
+# Delete session branches once main has swallowed them.
+#
+# Every Claude Code session cuts its own claude/** branch, and sync-main.yml
+# folds each one into main on push. After that merge the branch is a duplicate
+# of history main already carries, so keeping it only clutters the branch list.
+#
+# Two guards make this safe:
+#   1. Only branches fully merged into main go. Anything sync-main could not
+#      merge (a conflict) is kept and reported as a warning.
+#   2. The grace period keeps live sessions out of range -- a session that is
+#      still running pushed hours ago, not days. And even a wrong delete costs
+#      nothing: the branch's commits are in main, and the next `git push -u`
+#      simply recreates the ref.
+#
+# The grace period is one day, not three. At roughly six sessions a day, three
+# days meant eighteen merged branches sitting in the list at all times, which
+# is what the list looked like on 2026-09-01 before this was changed. One day
+# still covers the case the guard exists for, because a session lasts hours.
+
+name: prune-session-branches
+
+on:
+  schedule:
+    # Daily, 03:00 UTC (noon KST). The job is seconds long.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      grace_days:
+        description: "Keep branches touched within this many days (0 = clean everything merged)"
+        type: string
+        default: "1"
+      dry_run:
+        description: "Only list what would go, delete nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  # Share sync-main's group so a prune never lands mid-merge.
+  group: sync-main
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Delete merged session branches past the grace period
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GRACE_DAYS: ${{ inputs.grace_days || '1' }}
+        run: |
+          set -euo pipefail
+
+          cutoff=$(( $(date +%s) - GRACE_DAYS * 86400 ))
+          deleted=() kept_unmerged=() kept_recent=() failed=()
+
+          # A repo whose default branch is still a session branch would put that
+          # branch on the chopping block; GitHub refuses to delete a default
+          # branch, so the run would die on it. Skip it and say why.
+          default="$(git ls-remote --symref origin HEAD |
+                     sed -n 's#^ref: refs/heads/\(.*\)\tHEAD$#\1#p')"
+
+          while read -r ref stamp; do
+            [ -n "$ref" ] || continue
+            branch="${ref#origin/}"
+
+            if [ "$branch" = "$default" ]; then
+              echo "::warning::$branch 은 이 레포의 기본 브랜치라 못 지운다 — Settings에서 기본 브랜치를 main으로 바꿀 것."
+              continue
+            fi
+            if ! git merge-base --is-ancestor "$ref" origin/main; then
+              kept_unmerged+=("$branch")
+              continue
+            fi
+            if [ "$stamp" -gt "$cutoff" ]; then
+              kept_recent+=("$branch")
+              continue
+            fi
+
+            if [ "${DRY_RUN:-false}" = "true" ]; then
+              echo "would delete $branch"
+            # One branch that will not go (a protection rule, a race) must not
+            # cost the rest of the sweep, so failures are collected, not fatal.
+            elif ! git push origin --delete "$branch"; then
+              failed+=("$branch")
+              continue
+            fi
+            deleted+=("$branch")
+          done < <(git for-each-ref \
+                     --format='%(refname:short) %(committerdate:unix)' \
+                     refs/remotes/origin/claude/)
+
+          # Not an ancestor of main means sync-main failed on it, so that work
+          # exists only on the branch. Say so loudly instead of letting it sit.
+          if [ "${#kept_unmerged[@]}" -gt 0 ]; then
+            echo "::warning::main에 안 합쳐진 브랜치: ${kept_unmerged[*]} — 세션에서 확인할 것."
+          fi
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::warning::삭제 실패: ${failed[*]}"
+          fi
+
+          {
+            echo "### prune-session-branches"
+            echo
+            echo "- 삭제 ${#deleted[@]}개: ${deleted[*]:-—}"
+            echo "- 유예 기간(${GRACE_DAYS}일) 내라 유지 ${#kept_recent[@]}개: ${kept_recent[*]:-—}"
+            echo "- ⚠ main에 안 합쳐져 유지 ${#kept_unmerged[@]}개: ${kept_unmerged[*]:-—}"
+            echo "- ⚠ 삭제 실패 ${#failed[@]}개: ${failed[*]:-—}"
+          } >> "$GITHUB_STEP_SUMMARY"
