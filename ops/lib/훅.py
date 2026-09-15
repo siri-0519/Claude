@@ -264,8 +264,12 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
 def 라우트(자리: str, 위: Path) -> int:
     """레포 여럿을 한 디렉터리 아래 두고 그 위에서 세션을 열었을 때. ~/.claude/route.sh 가 부른다.
 
-    .ops.yml 을 가진 레포마다 그 레포의 hook.py 를 돌린다. 파일이 걸린 자리(도구 직전 · 직후)는 그 파일이 든
-    레포에서만, 답 끝은 이 세션에 파일을 고치거나 읽은 레포(없으면 서 있는 자리의 레포)에서만 돈다.
+    .ops.yml 을 가진 레포는 그 레포의 hook.py 를 돌리고, 그것 없이 .claude/settings.json 만 가진 레포(creation 처럼 자체 기계를
+    둔 레포)는 그 설정에 적힌 훅 명령을 돌린다 (2026-09-15 4단계). 파일이 걸린 자리(도구 직전 · 직후)는 그 파일이 든 레포에서만,
+    답 끝은 이 세션에 파일을 고치거나 읽은 레포(없으면 서 있는 자리의 레포)에서만, 세션 시작과 물음 직전은 전부 돈다.
+    결과는 하나로 합친다 — 막는 것(종료 코드 2)이 하나라도 있으면 그 stderr 를 모아 2 로 끝내고, JSON 으로 막은 것(permissionDecision
+    deny · decision block)은 첫 것을 내고, additionalContext 와 systemMessage 는 이어 붙인다. 레포마다 settings.json 의
+    permissions.deny 는 합쳐서 건다 — 위에서 연 세션에는 레포의 설정이 안 읽히기 때문이다.
     """
     import subprocess
     raw = sys.stdin.read() if not sys.stdin.isatty() else ""
@@ -273,54 +277,138 @@ def 라우트(자리: str, 위: Path) -> int:
         p = json.loads(raw) if raw.strip() else {}
     except ValueError:
         p = {}
-    레포들 = [d for d in sorted(위.iterdir()) if d.is_dir() and (d / ".ops.yml").is_file() and (d / ".claude/hooks/hook.py").is_file()]
+    도구 = str(p.get("tool_name") or "")
+    이벤트 = {"session_start": "SessionStart", "user_prompt_submit": "UserPromptSubmit", "pre_tool_use": "PreToolUse",
+            "post_tool_use": "PostToolUse", "stop": "Stop"}.get(자리, 자리)
+    디렉터리들 = [d for d in sorted(위.iterdir()) if d.is_dir() and not d.name.startswith(".") and (d / ".git").exists()]
+    틀레포 = [d for d in 디렉터리들 if (d / ".ops.yml").is_file() and (d / ".claude/hooks/hook.py").is_file()]
+    설정레포 = [d for d in 디렉터리들 if d not in 틀레포 and (d / ".claude/settings.json").is_file()]
+    레포들 = 틀레포 + 설정레포
     if not 레포들:
         return 0
-    고를것 = 레포들
-    if 자리 in ("pre_tool_use", "post_tool_use"):
-        ti = p.get("tool_input") or {}
-        후보 = [str(ti.get(k) or "") for k in ("file_path", "notebook_path")] + re.findall(r"[\w./~-]+", str(ti.get("command") or ""))
-        cwd = Path(p.get("cwd") or os.getcwd())
-        고를것 = []
+
+    def 설정읽기(r: Path) -> dict:
+        try:
+            return json.loads((r / ".claude/settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    if 자리 == "pre_tool_use" and 도구:
         for r in 레포들:
-            for s in 후보:
-                if not s or s.startswith("-"):
+            for 막 in (설정읽기(r).get("permissions") or {}).get("deny") or []:
+                if isinstance(막, str) and (도구 == 막 or 도구.startswith(막.rstrip("*")) and (막.endswith("*") or 도구[len(막):len(막) + 2] == "__")):
+                    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                          "permissionDecisionReason": f"{막} 은 {r.name} 레포 설정이 막아 둔 도구다 (permissions.deny)"}}, ensure_ascii=False))
+                    return 0
+
+    def 고르기(후보레포: list[Path]) -> list[Path]:
+        if 자리 in ("pre_tool_use", "post_tool_use"):
+            ti = p.get("tool_input") or {}
+            후보 = [str(ti.get(k) or "") for k in ("file_path", "notebook_path", "path")] + re.findall(r"[\w./~-]+", str(ti.get("command") or ""))
+            cwd = Path(p.get("cwd") or os.getcwd())
+            고른 = []
+            for r in 후보레포:
+                for s_ in 후보:
+                    if not s_ or s_.startswith("-"):
+                        continue
+                    q = Path(os.path.expanduser(s_))
+                    q = (q if q.is_absolute() else cwd / q)
+                    try:
+                        q = q.resolve()
+                    except OSError:
+                        continue
+                    if q == r.resolve() or r.resolve() in q.parents:
+                        고른.append(r); break
+            return 고른 or [r for r in 후보레포 if cwd.resolve() == r.resolve() or r.resolve() in cwd.resolve().parents]
+        if 자리 == "stop":
+            import 대화
+            t = p.get("transcript_path") or ""
+            d = 대화.훑기(Path(t)) if t and Path(t).is_file() else {"읽은파일": set(), "고친파일": set()}
+            닿은 = set()
+            for f in set(d["읽은파일"]) | set(d["고친파일"]):
+                q = Path(f)
+                for r in 후보레포:
+                    if q.is_absolute() and (q == r.resolve() or r.resolve() in q.parents):
+                        닿은.add(r)
+            cwd = Path(p.get("cwd") or os.getcwd()).resolve()
+            return sorted(닿은) or [r for r in 후보레포 if cwd == r.resolve() or r.resolve() in cwd.parents] or 후보레포[:1]
+        return 후보레포
+
+    def 맞나(matcher, 도구이름: str) -> bool:
+        if not matcher or matcher == "*":
+            return True
+        try:
+            return re.fullmatch(str(matcher), 도구이름) is not None
+        except re.error:
+            return matcher == 도구이름
+
+    할것: list[tuple[Path, list[str] | str]] = []
+    for r in 고르기(틀레포):
+        할것.append((r, [sys.executable, str(r / ".claude/hooks/hook.py"), 자리]))
+    for r in 고르기(설정레포):
+        for 묶음 in (설정읽기(r).get("hooks") or {}).get(이벤트) or []:
+            if 자리 in ("pre_tool_use", "post_tool_use") and not 맞나(묶음.get("matcher"), 도구):
+                continue
+            for 항목 in 묶음.get("hooks") or []:
+                cmd = str(항목.get("command") or "")
+                if not cmd:
                     continue
-                q = Path(os.path.expanduser(s))
-                q = (q if q.is_absolute() else cwd / q)
-                try:
-                    q = q.resolve()
-                except OSError:
-                    continue
-                if q == r.resolve() or r.resolve() in q.parents:
-                    고를것.append(r); break
-        if not 고를것:
-            고를것 = [r for r in 레포들 if cwd.resolve() == r.resolve() or r.resolve() in cwd.resolve().parents]
-    elif 자리 == "stop":
-        import 대화
-        t = p.get("transcript_path") or ""
-        d = 대화.훑기(Path(t)) if t and Path(t).is_file() else {"읽은파일": set(), "고친파일": set()}
-        닿은 = set()
-        for f in set(d["읽은파일"]) | set(d["고친파일"]):
-            q = Path(f)
-            for r in 레포들:
-                if q.is_absolute() and (q == r.resolve() or r.resolve() in q.parents):
-                    닿은.add(r)
-        cwd = Path(p.get("cwd") or os.getcwd()).resolve()
-        고를것 = sorted(닿은) or [r for r in 레포들 if cwd == r.resolve() or r.resolve() in cwd.parents] or 레포들[:1]
-    코드 = 0
-    for r in 고를것:
+                cmd = cmd.replace('"$CLAUDE_PROJECT_DIR"', str(r)).replace("${CLAUDE_PROJECT_DIR}", str(r)).replace("$CLAUDE_PROJECT_DIR", str(r))
+                할것.append((r, cmd))
+    if not 할것:
+        return 0
+    시간 = 320 if 자리 == "stop" else 110
+    결과: list[tuple[Path, int, str, str]] = []
+    for r, cmd in 할것:
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(r))
         try:
-            x = subprocess.run([sys.executable, str(r / ".claude/hooks/hook.py"), 자리], input=raw, text=True,
-                               capture_output=True, cwd=str(r), env=env, timeout=230)
+            x = subprocess.run(cmd, shell=isinstance(cmd, str), input=raw, text=True, capture_output=True,
+                               cwd=str(r), env=env, timeout=시간)
         except subprocess.TimeoutExpired:
-            print(f"[훅] {r.name} {자리} 이 시간을 넘겼다", file=sys.stderr)
+            결과.append((r, 0, "", f"[훅] {r.name} {자리} 이 시간을 넘겼다\n"))
             continue
-        if x.stdout:
-            sys.stdout.write(x.stdout)
-        if x.stderr:
-            sys.stderr.write(x.stderr)
-        if x.returncode == 2:
-            코드 = 2
-    return 코드
+        except OSError as e:
+            결과.append((r, 0, "", f"[훅] {r.name} {자리} 을 못 돌렸다 — {e}\n"))
+            continue
+        결과.append((r, x.returncode, x.stdout, x.stderr))
+    막힘 = [err for _r, rc, _o, err in 결과 if rc == 2]
+    if 막힘:
+        for _r, rc, _o, err in 결과:
+            if rc != 2 and err.strip():
+                sys.stderr.write(err if err.endswith("\n") else err + "\n")
+        sys.stderr.write("\n".join(x.rstrip("\n") for x in 막힘 if x.strip()) + "\n")
+        return 2
+    결정, 문맥, 알림 = [], [], []
+    for r, rc, out, err in 결과:
+        if err.strip():
+            sys.stderr.write(err if err.endswith("\n") else err + "\n")
+        if not out.strip():
+            continue
+        for 조각 in out.strip().split("\n"):
+            try:
+                js = json.loads(조각)
+            except ValueError:
+                js = None
+            if not isinstance(js, dict):
+                if 자리 in ("session_start", "user_prompt_submit"):
+                    문맥.append(조각.strip())
+                continue
+            hso = js.get("hookSpecificOutput") or {}
+            if js.get("decision") == "block" or js.get("continue") is False or hso.get("permissionDecision") in ("deny", "ask"):
+                결정.append(js)
+                continue
+            if hso.get("additionalContext"):
+                문맥.append(str(hso["additionalContext"]).strip())
+            if js.get("systemMessage"):
+                알림.append(str(js["systemMessage"]))
+    if 결정:
+        print(json.dumps(결정[0], ensure_ascii=False))
+        return 0
+    나갈것: dict = {}
+    if 문맥:
+        나갈것["hookSpecificOutput"] = {"hookEventName": 이벤트, "additionalContext": "\n\n".join(문맥)}
+    if 알림:
+        나갈것["systemMessage"] = "\n".join(알림)
+    if 나갈것:
+        print(json.dumps(나갈것, ensure_ascii=False))
+    return 0

@@ -19,9 +19,15 @@ from 공통 import 설정
 규칙파일 = "ops/rules/판단.md"
 
 
+def 규칙파일자리(뿌리: Path) -> Path:
+    """판단 규칙 파일. 기본은 ops/rules/판단.md 고, .ops.yml 의 판단규칙 칸이 바꾼다 — creation 처럼 자체 기계를 둔 레포는
+    tools/판단.md 에 둔다 (2026-09-15 4단계)."""
+    return 뿌리 / (설정(뿌리).get("판단규칙") or 규칙파일)
+
+
 def 규칙글(뿌리: Path, 절: str) -> str:
     """판단.md 에서 「용어」와 「고칠 때」 또는 「답할 때」 절을 한 글로."""
-    p = 뿌리 / 규칙파일
+    p = 규칙파일자리(뿌리)
     if not p.is_file():
         return ""
     글 = p.read_text(encoding="utf-8")
@@ -113,7 +119,7 @@ def 풀기(out: str) -> list[dict]:
 
 def 규칙전문들(뿌리: Path) -> dict[str, str]:
     """판단.md 의 "5. 직접 본 것 · 추측 · 크기를 밝힌다. …" 줄에서 번호 → 그 규칙 전문."""
-    p = 뿌리 / 규칙파일
+    p = 규칙파일자리(뿌리)
     d: dict[str, str] = {}
     if p.is_file():
         for ln in p.read_text(encoding="utf-8").splitlines():

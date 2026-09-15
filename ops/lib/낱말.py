@@ -56,7 +56,7 @@ def 아는말(뿌리: Path, c: dict, 사용자글: list[str], 읽은파일: set[
                 본문 += "\n" + p.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 pass
-    for r in ("ops/rules/판단.md", "ops/rules/기계.yml", ".ops.yml", "CLAUDE.md"):
+    for r in c.get("아는말파일") or ("ops/rules/판단.md", "ops/rules/기계.yml", ".ops.yml", "CLAUDE.md"):
         p = 뿌리 / r
         if p.is_file():
             본문 += "\n" + p.read_text(encoding="utf-8", errors="ignore")

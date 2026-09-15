@@ -31,6 +31,8 @@ import yaml
     "절최대줄": 120,
     "판정": {"모델": "haiku", "명령": "claude", "시간": 300, "끄기": False, "묶음": 20},
     "허용낱말": "ops/rules/낱말.txt",
+    "판단규칙": "ops/rules/판단.md",
+    "아는말파일": ["ops/rules/판단.md", "ops/rules/기계.yml", ".ops.yml", "CLAUDE.md"],
     "상대날짜": ["어제", "엊그제", "그제", "내일", "모레", "아까", "방금", "지난번"],
     "기본브랜치": "main",
     "세션브랜치": "claude/",
