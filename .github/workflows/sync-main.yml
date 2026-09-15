@@ -1,0 +1,82 @@
+# Fold every session's work back into main automatically.
+#
+# Each Claude Code session gets a fresh branch cut from main. Without this,
+# session B starts from a main that never received session A's edits, so the
+# notes silently roll back unless a pull request is merged by hand.
+#
+# On any push to a session branch, merge it into main. Nothing to click.
+#
+# One exception (2026-09-15). A push that changes the checks, hooks, rules or
+# settings — the machinery that constrains the sessions themselves — is not
+# merged. The workflow opens a pull request and the owner reads and merges it
+# on the GitHub web. A session once edited the check that was blocking it in
+# order to get past it (2026-09-07 record); the session cannot click merge.
+
+name: sync-main
+
+on:
+  push:
+    branches:
+      - "claude/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # One merge at a time, so two sessions pushing together cannot race main.
+  group: sync-main
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge the session branch into main, or hold it when it changes the machinery
+        env:
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          # 검사 · 훅 · 규칙 · 설정이 있는 자리. 여기를 바꾼 push 는 자동으로 합치지 않는다.
+          GATED_PATHS: "ops .claude .github .githooks .ops.yml"
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git merge-base --is-ancestor "origin/$BRANCH" HEAD; then
+            echo "main already contains $BRANCH — nothing to do."
+            exit 0
+          fi
+
+          base="$(git merge-base HEAD "origin/$BRANCH")"
+          # shellcheck disable=SC2086
+          touched="$(git diff --name-only "$base" "origin/$BRANCH" -- $GATED_PATHS || true)"
+          if [ -n "$touched" ]; then
+            echo "::notice::$BRANCH changes the checks or hooks — held for the owner, not merged."
+            printf '%s\n' "$touched"
+            open="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq 'length' 2>/dev/null || echo 0)"
+            if [ "$open" = "0" ]; then
+              body="$(printf '검사 · 훅 · 규칙 · 설정을 바꾸는 push 다. 자동으로 main 에 합치지 않는다. 본인이 GitHub 웹에서 보고 합친다.\n\n바뀐 파일:\n%s\n' "$touched")"
+              if ! gh pr create --base main --head "$BRANCH" --title "검사와 훅을 바꾼다 — $BRANCH" --body "$body"; then
+                echo "::warning::could not open the pull request. Enable 'Allow GitHub Actions to create and approve pull requests' under Settings → Actions → General, or open the pull request from the branch page by hand."
+              fi
+            else
+              echo "pull request already open for $BRANCH"
+            fi
+            exit 0
+          fi
+
+          # --ff so a session branch that simply moved ahead stays linear.
+          if ! git merge --ff --no-edit \
+              -m "Merge $BRANCH into main" "origin/$BRANCH"; then
+            git merge --abort || true
+            echo "::error::$BRANCH conflicts with main. Resolve it in a session, then push again."
+            exit 1
+          fi
+
+          git push origin HEAD:main

@@ -42,7 +42,7 @@
 
 ## 이 레포
 
-기본 브랜치는 `main` 이다. 세션마다 `claude/**` 브랜치가 생긴다. 고친 것은 커밋하고 그 브랜치로 push 한다. 답이 끝날 때 훅이 커밋 · push 를 확인한다. 기본 브랜치에 안 합쳐진 세션 브랜치는 어긋남 목록에 오른다. 기본 브랜치를 바꾸는 것과 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다.
+기본 브랜치는 `main` 이다. 세션마다 `claude/**` 브랜치가 생긴다. 고친 것은 커밋하고 그 브랜치로 push 한다 — push 하면 `.github/workflows/sync-main.yml` 이 main 에 합치고, `prune-session-branches.yml` 이 합쳐진 지 하루 지난 브랜치를 지운다. 검사 · 훅 · 규칙 · 설정(`ops/` · `.claude/` · `.github/` · `.ops.yml`)을 바꾼 push 는 합치지 않고 PR 로 잡아 두며, 사용자가 GitHub 웹에서 보고 합친다. 이 레포는 거의 전부 기계라 대부분의 push 가 잡힌다. 답이 끝날 때 훅이 커밋 · push 를 확인한다. 기본 브랜치에 안 합쳐진 세션 브랜치는 어긋남 목록에 오른다. 기본 브랜치를 바꾸는 것과 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다.
 
 ## 훅 (`.claude/hooks/hook.py` → `ops/lib/훅.py`)
 
