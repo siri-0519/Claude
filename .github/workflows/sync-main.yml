@@ -59,11 +59,14 @@ jobs:
           if [ -n "$touched" ]; then
             echo "::notice::$BRANCH changes the checks or hooks — held for the owner, not merged."
             printf '%s\n' "$touched"
-            open="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq 'length' 2>/dev/null || echo 0)"
+            open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq 'length' 2>/dev/null || echo 0)"
             if [ "$open" = "0" ]; then
               body="$(printf '검사 · 훅 · 규칙 · 설정을 바꾸는 push 다. 자동으로 main 에 합치지 않는다. 본인이 GitHub 웹에서 보고 합친다.\n\n바뀐 파일:\n%s\n' "$touched")"
-              if ! gh pr create --base main --head "$BRANCH" --title "검사와 훅을 바꾼다 — $BRANCH" --body "$body"; then
-                echo "::warning::could not open the pull request. Enable 'Allow GitHub Actions to create and approve pull requests' under Settings → Actions → General, or open the pull request from the branch page by hand."
+              # 실패 이유를 실행 기록의 요약에 그대로 남긴다 — 2026-09-15 첫 실행에서 PR 이 안 생겼는데 이유가 안 보였다.
+              if out="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "검사와 훅을 바꾼다 — $BRANCH" --body "$body" 2>&1)"; then
+                echo "opened: $out"
+              else
+                echo "::warning::could not open the pull request — $out — open it from the branch page by hand, or check Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'."
               fi
             else
               echo "pull request already open for $BRANCH"
