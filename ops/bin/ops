@@ -152,9 +152,17 @@ def cmd_토큰(a) -> int:
         날별: dict = defaultdict(lambda: [0, 0])
         for d in 판정들:
             k = str(d.get("때", ""))[:10]; 날별[k][0] += 1; 날별[k][1] += 1 if int(d.get("어긴") or 0) else 0
+        초들: dict = defaultdict(list)
+        for d in 판정들:
+            if d.get("초"):
+                초들[(str(d.get("때", ""))[:10], d.get("모델") or "?")].append(float(d["초"]))
         print("\n판정을 시킨 횟수(날 · 시킨 번 · 어긴 것이 있던 번):")
         for 날, (n, m) in sorted(날별.items(), reverse=True)[:30]:
             print(f"- {날}: {n}번 시켜 {m}번 걸렸다")
+        if 초들:
+            print("\n판정에 걸린 시간(날 · 모델 · 번 · 평균 초 · 가장 긴 초):")
+            for (날, 모델), xs in sorted(초들.items(), reverse=True)[:30]:
+                print(f"- {날} {모델}: {len(xs)}번 · 평균 {sum(xs)/len(xs):.0f}초 · 최대 {max(xs):.0f}초")
     return 0
 
 
