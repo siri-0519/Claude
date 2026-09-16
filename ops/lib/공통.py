@@ -107,9 +107,22 @@ def 훅입력() -> dict:
         return {}
 
 
+def 크기기록(자리: str, 글: str, 어떻게: str) -> None:
+    """훅이 문맥에 넣거나(문맥) 막으며 보낸(막기) 글의 크기 한 줄 — 설계.md 1절 「토큰 절약」의 재는 법(시작과 답마다 들어간 바이트).
+    뿌리는 CLAUDE_PROJECT_DIR 로 안다. 없으면 적지 않는다."""
+    뿌리 = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not 뿌리:
+        return
+    try:
+        기록추가(Path(뿌리), "문맥", {"때": 지금시각(), "자리": 자리, "어떻게": 어떻게, "바이트": len(글.encode("utf-8"))})
+    except OSError:
+        pass
+
+
 def 문맥출력(자리: str, 글: str) -> None:
     이름 = {"session_start": "SessionStart", "user_prompt_submit": "UserPromptSubmit",
             "pre_tool_use": "PreToolUse", "post_tool_use": "PostToolUse", "stop": "Stop"}[자리]
+    크기기록(자리, 글, "문맥")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": 이름, "additionalContext": 글}},
                      ensure_ascii=False))
 
@@ -122,6 +135,7 @@ def 막기(말: str) -> int:
 
     막는 글은 전부 누가 보낸 것인지로 시작한다 — 맥락 없는 모델 셋에게 읽혔을 때 보낸 곳이 없는 글을 따르지 않은 것이
     2026-09-16 4판 · 5판에서 나왔다 (ops/rules/훅-글.md)."""
+    크기기록("막기", 보낸이 + 말, "막기")
     print(보낸이 + 말, file=sys.stderr)
     return 2
 
@@ -174,6 +188,30 @@ def 로그읽기(뿌리: Path, n: int = 20) -> list[dict]:
 
 횟수파일 = "memory/횟수.jsonl"
 횟수대기 = ".meta/횟수.new.jsonl"   # git 이 보지 않는 자리. 커밋 직전에 횟수파일로 합친다
+# 세 기록은 같은 길을 간다 — .meta 의 대기 파일에 적고, 커밋 직전(ops check --커밋)에 memory/ 의 파일 뒤에 붙인다.
+# 횟수: 어긴 것 한 줄 · 판정: 판정을 한 번 시킬 때마다 한 줄(어긴 것의 분모) · 문맥: 훅이 문맥에 넣거나 막으며 보낸 글의 크기 한 줄(토큰 절약의 재는 법)
+기록들 = {"횟수": (횟수파일, 횟수대기), "판정": ("memory/판정.jsonl", ".meta/판정.new.jsonl"), "문맥": ("memory/문맥.jsonl", ".meta/문맥.new.jsonl")}
+
+
+def 기록추가(뿌리: Path, 종류: str, 항: dict) -> None:
+    p = 뿌리 / 기록들[종류][1]
+    p.parent.mkdir(exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(항, ensure_ascii=False) + "\n")
+
+
+def 기록읽기(뿌리: Path, 종류: str) -> list[dict]:
+    """합친 것과 아직 안 합친 것을 같이."""
+    나온것: list[dict] = []
+    for 이름 in 기록들[종류]:
+        p = 뿌리 / 이름
+        if p.is_file():
+            for ln in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    나온것.append(json.loads(ln))
+                except ValueError:
+                    pass
+    return 나온것
 
 
 def 횟수추가(뿌리: Path, 누가: str, 규칙: str, 어디: str = "") -> None:
@@ -190,18 +228,21 @@ def 횟수추가(뿌리: Path, 누가: str, 규칙: str, 어디: str = "") -> No
 
 
 def 횟수합치기(뿌리: Path) -> int:
-    """.meta/횟수.new.jsonl 의 줄을 memory/횟수.jsonl 뒤에 붙이고 대기 파일을 지운다. 옮긴 줄 수를 돌려준다."""
-    대기 = 뿌리 / 횟수대기
-    if not 대기.is_file():
-        return 0
-    줄들 = [x for x in 대기.read_text(encoding="utf-8").splitlines() if x.strip()]
-    if 줄들:
-        p = 뿌리 / 횟수파일
-        p.parent.mkdir(exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write("\n".join(줄들) + "\n")
-    대기.unlink()
-    return len(줄들)
+    """대기 파일 셋(횟수 · 판정 · 문맥)의 줄을 memory/ 의 파일 뒤에 붙이고 대기 파일을 지운다. 옮긴 줄 수의 합을 돌려준다."""
+    n = 0
+    for 파일, 대기이름 in 기록들.values():
+        대기 = 뿌리 / 대기이름
+        if not 대기.is_file():
+            continue
+        줄들 = [x for x in 대기.read_text(encoding="utf-8").splitlines() if x.strip()]
+        if 줄들:
+            p = 뿌리 / 파일
+            p.parent.mkdir(exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write("\n".join(줄들) + "\n")
+        대기.unlink()
+        n += len(줄들)
+    return n
 
 
 def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:

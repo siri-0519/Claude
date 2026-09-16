@@ -229,12 +229,9 @@ def 도구직후(뿌리: Path, c: dict, p: dict) -> int:
 # --------------------------------------------------------------- 답 끝 ----
 
 def 판정기록(뿌리: Path, 자리: str, 어긴수: int, 오류: str) -> None:
-    """판정이 한 번 돌 때마다 .meta/판정.jsonl 에 한 줄 — 어긴 것만 적는 memory/횟수.jsonl 에는 분모가 없다 (2026-09-16 사용자 물음)."""
-    d = 뿌리 / ".meta"
-    d.mkdir(exist_ok=True)
-    from 공통 import 지금시각
-    with (d / "판정.jsonl").open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"때": 지금시각(), "자리": 자리, "어긴": 어긴수, "오류": 오류 or ""}, ensure_ascii=False) + "\n")
+    """판정을 한 번 시킬 때마다 한 줄 — 어긴 것만 적는 memory/횟수.jsonl 에는 분모가 없다 (2026-09-16 사용자 물음). 커밋 직전에 memory/판정.jsonl 로 합쳐진다."""
+    from 공통 import 기록추가, 지금시각
+    기록추가(뿌리, "판정", {"때": 지금시각(), "자리": 자리, "어긴": 어긴수, "오류": 오류 or ""})
 
 
 def 답끝(뿌리: Path, c: dict, p: dict) -> int:
