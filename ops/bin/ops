@@ -221,7 +221,11 @@ def push검사(r: Path) -> int:
         if len(부분) != 4:
             continue
         lref, lsha, rref, rsha = 부분
-        if set(lsha) == {"0"}:
+        if rref == "refs/heads/main":
+            # 세션은 main 에 직접 push 하지 않는다 (2026-09-16). 세션 브랜치로 push 하면 sync-main 워크플로가 main 에 넣고,
+            # 검사 · 훅 · 규칙 · 설정을 바꾼 것이면 PR 로 잡아 둬 사용자가 웹에서 본다 — 직접 push 는 그 잡아 두기를 건너뛴다.
+            막힘.append(f"{rref} 에 직접 push 하는 것이다. 세션 브랜치(claude/**)로 push 하면 sync-main 워크플로가 main 에 넣거나 PR 로 잡아 둔다")
+        elif set(lsha) == {"0"}:
             막힘.append(f"{rref} 를 지우는 push 다. 원격 브랜치를 지우는 것은 사람이 GitHub 에서 한다. 사용자에게 그렇게 알린다")
         elif set(rsha) != {"0"}:
             import subprocess
