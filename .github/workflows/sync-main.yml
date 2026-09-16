@@ -6,11 +6,21 @@
 #
 # On any push to a session branch, merge it into main. Nothing to click.
 #
-# One exception (2026-09-15). A push that changes the checks, hooks, rules or
-# settings — the machinery that constrains the sessions themselves — is not
-# merged. The workflow opens a pull request and the owner reads and merges it
-# on the GitHub web. A session once edited the check that was blocking it in
-# order to get past it (2026-09-07 record); the session cannot click merge.
+# One exception (2026-09-15, changed 2026-09-17). A push that changes the
+# checks, hooks, rules or settings — the machinery that constrains the
+# sessions themselves — is pushed to main only if the repository's self-test
+# (python3 ops/test/selftest.py) passes on the merge result. If it fails, the
+# workflow opens (or updates) a pull request carrying the failure, and the
+# owner decides on the GitHub web.
+#
+# Until 2026-09-17 every such push was held as a pull request for the owner
+# to read and merge, because a session once edited the check that was
+# blocking it in order to get past it (2026-09-07 record). The owner replaced
+# that manual merge with the self-test on 2026-09-17: the diffs were being
+# merged without being read, so the hold cost a click and protected nothing.
+# What the change costs: a session that loosens a check while keeping the
+# self-test green is no longer stopped here. It stays visible in the commit
+# log, and the session's answer must say what it changed.
 
 name: sync-main
 
@@ -37,12 +47,14 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Merge the session branch into main, or hold it when it changes the machinery
+      - name: Merge the session branch into main — when it changes the machinery, only if the self-test passes
         env:
           BRANCH: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
-          # 검사 · 훅 · 규칙 · 설정이 있는 자리. 여기를 바꾼 push 는 자동으로 합치지 않는다.
+          # 검사 · 훅 · 규칙 · 설정이 있는 자리. 여기를 바꾼 push 는 자체 시험이 통과할 때만 합친다.
           GATED_PATHS: "ops .claude .github .githooks .ops.yml"
+          # 합친 결과에서 돌리는 자체 시험. 종료 코드 0 이면 합치고, 아니면 PR 로 잡아 둔다.
+          SELFTEST: "python3 ops/test/selftest.py"
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -56,30 +68,48 @@ jobs:
           base="$(git merge-base HEAD "origin/$BRANCH")"
           # shellcheck disable=SC2086
           touched="$(git diff --name-only "$base" "origin/$BRANCH" -- $GATED_PATHS || true)"
-          if [ -n "$touched" ]; then
-            echo "::notice::$BRANCH changes the checks or hooks — held for the owner, not merged."
-            printf '%s\n' "$touched"
-            open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq 'length' 2>/dev/null || echo 0)"
-            if [ "$open" = "0" ]; then
-              body="$(printf '검사 · 훅 · 규칙 · 설정을 바꾸는 push 다. 자동으로 main 에 합치지 않는다. 본인이 GitHub 웹에서 보고 합친다.\n\n바뀐 파일:\n%s\n' "$touched")"
-              # 실패 이유를 실행 기록의 요약에 그대로 남긴다 — 2026-09-15 첫 실행에서 PR 이 안 생겼는데 이유가 안 보였다.
-              if out="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "검사와 훅을 바꾼다 — $BRANCH" --body "$body" 2>&1)"; then
-                echo "opened: $out"
-              else
-                echo "::warning::could not open the pull request — $out — open it from the branch page by hand, or check Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'."
-              fi
-            else
-              echo "pull request already open for $BRANCH"
-            fi
-            exit 0
-          fi
 
-          # --ff so a session branch that simply moved ahead stays linear.
+          # --ff so a session branch that simply moved ahead stays linear. The merge is local
+          # first; main is pushed only after the self-test (when it applies) has passed on it.
           if ! git merge --ff --no-edit \
               -m "Merge $BRANCH into main" "origin/$BRANCH"; then
             git merge --abort || true
             echo "::error::$BRANCH conflicts with main. Resolve it in a session, then push again."
             exit 1
+          fi
+
+          if [ -n "$touched" ]; then
+            echo "::notice::$BRANCH changes the checks or hooks — running the self-test on the merge result before pushing main."
+            printf '%s\n' "$touched"
+            # ops/lib reads .ops.yml with PyYAML; the runner image may not ship it.
+            python3 -c 'import yaml' 2>/dev/null \
+              || python3 -m pip install --quiet pyyaml \
+              || python3 -m pip install --quiet --break-system-packages pyyaml
+            if out="$($SELFTEST 2>&1)"; then
+              echo "self-test passed on the merge result:"
+              printf '%s\n' "$out" | tail -n 3
+            else
+              echo "::error::the self-test failed on the merge result — held as a pull request, not merged."
+              printf '%s\n' "$out" | tail -n 40
+              git reset --hard origin/main
+              tail40="$(printf '%s\n' "$out" | tail -n 40)"
+              body="$(printf '검사 · 훅 · 규칙 · 설정을 바꾸는 push 인데, main 에 합친 결과에서 자체 시험(%s)이 실패했다. 자동으로 합치지 않는다. 세션에서 고쳐 다시 push 하면 다시 시험한다. 그대로 합치려면 본인이 GitHub 웹에서 합친다.\n\n바뀐 파일:\n%s\n\n자체 시험 출력(끝 40줄):\n```\n%s\n```\n' "$SELFTEST" "$touched" "$tail40")"
+              number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+              case "$number" in ''|*[!0-9]*) number="";; esac   # 숫자가 아니면 열린 PR 이 없는 것으로 본다
+              if [ -n "$number" ]; then
+                if gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --body "$body" >/dev/null 2>&1; then
+                  echo "updated pull request #$number with the new failure"
+                else
+                  echo "::warning::could not update pull request #$number — the failure is in this log."
+                fi
+              # 실패 이유를 실행 기록의 요약에 그대로 남긴다 — 2026-09-15 첫 실행에서 PR 이 안 생겼는데 이유가 안 보였다.
+              elif opened="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "검사와 훅을 바꾼다 — $BRANCH (자체 시험 실패)" --body "$body" 2>&1)"; then
+                echo "opened: $opened"
+              else
+                echo "::warning::could not open the pull request — $opened — open it from the branch page by hand, or check Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'."
+              fi
+              exit 0
+            fi
           fi
 
           git push origin HEAD:main
