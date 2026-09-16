@@ -67,7 +67,7 @@ jobs:
 
           base="$(git merge-base HEAD "origin/$BRANCH")"
           # shellcheck disable=SC2086
-          touched="$(git diff --name-only "$base" "origin/$BRANCH" -- $GATED_PATHS || true)"
+          touched="$(git -c core.quotePath=false diff --name-only "$base" "origin/$BRANCH" -- $GATED_PATHS || true)"   # 한글 파일 이름을 그대로 적는다
 
           # --ff so a session branch that simply moved ahead stays linear. The merge is local
           # first; main is pushed only after the self-test (when it applies) has passed on it.

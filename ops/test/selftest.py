@@ -20,8 +20,8 @@ sys.path.insert(0, str(틀 / "ops" / "lib"))
 실패: list[str] = []
 
 
-def 확인(조건: bool, 말: str) -> None:
-    print(("  ok  " if 조건 else "  FAIL") + " " + 말)
+def 확인(조건: bool, 말: str, 덧말: str = "") -> None:
+    print(("  ok  " if 조건 else "  FAIL") + " " + 말 + (f"\n       {덧말}" if 덧말 and not 조건 else ""))
     if not 조건:
         실패.append(말)
 
@@ -254,6 +254,25 @@ def main() -> int:
     (r / ".meta/session.json").write_text(json.dumps({"되돌림": 2, "어긋남": []}), encoding="utf-8")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
     확인(code == 0 and "어긋남" in out, "두 번 되돌린 뒤에는 막지 않고 어긋남 개수만 알린다")
+    # 기록 보존 (2026-09-17) — 고친 것이 없고 push 가 끝났으면, 한 시간에 한 번 훅이 스스로 기록을 memory/ 로 옮겨 커밋 · push 한다
+    git(r, "add", "-A"); subprocess.run(["git", "-C", str(r), "commit", "-q", "--no-verify", "-m", "정리"], capture_output=True, text=True)
+    원격 = Path(tempfile.mkdtemp(prefix="ops-origin-")); subprocess.run(["git", "init", "-q", "--bare", str(원격)], check=True)
+    git(r, "remote", "add", "origin", str(원격)); git(r, "checkout", "-q", "-b", "claude/x"); git(r, "push", "-q", "-u", "origin", "claude/x")
+    기록줄 = json.dumps({"날": "2026-09-17", "누가": "기계", "규칙": "상대날짜"}, ensure_ascii=False) + "\n"
+    (r / ".meta/횟수.new.jsonl").write_text(기록줄, encoding="utf-8")
+    (r / ".meta/session.json").write_text(json.dumps({"되돌림": 0, "어긋남": []}), encoding="utf-8")
+    앞 = git(r, "rev-parse", "HEAD")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
+    확인(code == 0 and "커밋 · push 했다" in out and git(r, "rev-parse", "HEAD") != 앞
+         and "memory/횟수.jsonl" in git(r, "-c", "core.quotePath=false", "show", "--stat", "--format=", "HEAD")
+         and git(r, "rev-parse", "origin/claude/x") == git(r, "rev-parse", "HEAD")
+         and not (r / ".meta/횟수.new.jsonl").exists(),
+         "고친 것이 없으면 답 끝에 기록을 memory/ 로 옮겨 커밋 · push 한다", (out + " | " + err)[:300])
+    (r / ".meta/횟수.new.jsonl").write_text(기록줄, encoding="utf-8")
+    뒤 = git(r, "rev-parse", "HEAD")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
+    확인(code == 0 and git(r, "rev-parse", "HEAD") == 뒤 and (r / ".meta/횟수.new.jsonl").exists(), "한 시간 안에는 기록을 다시 커밋하지 않는다")
+    (r / ".meta/횟수.new.jsonl").unlink()
     code, out, err = 훅돌리기(r, "session_start", {"source": "startup", "cwd": str(r)})
     확인(code == 0 and "어긋남 목록" in out and "브랜치" in out, "세션 시작에 목록과 레포 상태가 들어간다")
     code, out, err = 훅돌리기(r, "user_prompt_submit", {"cwd": str(r)})

@@ -235,6 +235,45 @@ def 판정기록(뿌리: Path, 자리: str, 어긴수: int, 오류: str, 초: fl
     기록추가(뿌리, "판정", {"때": 지금시각(), "자리": 자리, "어긴": 어긴수, "오류": 오류 or "", "초": round(초, 1), "모델": 모델})
 
 
+def 기록커밋(뿌리: Path, c: dict, s: dict) -> str | None:
+    """답 끝 검사가 .meta/ 에 적어 둔 기록(위반 횟수 · 판정 · 문맥 크기)을, 고친 것이 없고 push 도 끝난 답 끝에서
+    한 시간에 한 번까지 훅이 스스로 memory/ 로 옮겨 커밋 · push 한다 (2026-09-17, 사용자 승인).
+
+    기록은 다음 커밋에 얹는 것이 기본이다(기록 한 줄짜리 커밋을 안 만들려고, 2026-09-16). 그런데 커밋 없이 끝난 세션의 기록은
+    이 세션이 도는 컴퓨터가 지워질 때 함께 사라진다. 답마다 커밋하면 기록 커밋이 쌓이므로(2026-09-16: 커밋 31개 중 16개)
+    한 시간에 한 번이다. 돌려주는 것은 사용자에게 보일 한 줄이고, 아무것도 안 했으면 None 이다."""
+    import subprocess, time
+    from 공통 import 기록들, 횟수합치기
+    if not any((뿌리 / 대기).is_file() and (뿌리 / 대기).stat().st_size for _, 대기 in 기록들.values()):
+        return None
+    if time.time() - float(s.get("기록커밋때") or 0) < 3600:
+        return None
+    if git(뿌리, "status", "--porcelain").strip():
+        return None                                   # 다른 고친 것이 있으면 그 커밋에 얹는다 (ops check --커밋)
+    가지 = git(뿌리, "rev-parse", "--abbrev-ref", "HEAD")
+    if not 가지 or 가지 == "HEAD" or 가지 == c.get("기본브랜치"):
+        return None                                   # 세션 브랜치에서만 — main 에 직접 push 하지 않는다
+    n = 횟수합치기(뿌리)
+    if not n:
+        return None
+    s["기록커밋때"] = time.time()
+    상태쓰기(뿌리, 세션파일, s)
+    git(뿌리, "add", "--", *[파일 for 파일, _ in 기록들.values() if (뿌리 / 파일).is_file()])
+    # --no-verify: 커밋 직전 검사(ops check --커밋)는 모델이 고친 문서를 보는 것이다. 이 커밋은 훅이 만든 기록 줄만 담으므로 거치지 않는다 —
+    # 거치면 다른 파일(예: 손으로 고친 STATUS.md)의 문제로 기록 커밋이 막히고, 그 문제는 어차피 다음 답 끝의 커밋 · push 확인이 잡는다.
+    r = subprocess.run(["git", "-C", str(뿌리), "commit", "-q", "--no-verify", "-m", f"답 끝 검사의 기록 {n}줄을 memory/ 로 옮긴다 — 훅이 한 시간에 한 번 스스로 한다"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return f"답 끝 검사의 기록 {n}줄을 memory/ 로 옮겼지만 커밋이 안 됐다 — 다음 답 끝의 커밋 · push 확인이 잡는다: {r.stderr.strip()[-200:]}"
+    try:
+        x = subprocess.run(["git", "-C", str(뿌리), "push", "-q", "origin", 가지], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return f"답 끝 검사의 기록 {n}줄을 커밋했지만 push 가 60초를 넘겼다 — 다음 답 끝의 커밋 · push 확인이 잡는다"
+    if x.returncode != 0:
+        return f"답 끝 검사의 기록 {n}줄을 커밋했지만 push 가 안 됐다 — 다음 답 끝의 커밋 · push 확인이 잡는다: {x.stderr.strip()[-200:]}"
+    return f"답 끝 검사의 기록 {n}줄을 memory/ 로 옮겨 커밋 · push 했다 (훅이 한 시간에 한 번 스스로 한다)"
+
+
 def 답끝(뿌리: Path, c: dict, p: dict) -> int:
     import 기계, 낱말, 대화, 판정
     # 되돌린 뒤(stop_hook_active)에는 상대 날짜와 판정으로 다시 막지 않는다 — 끝없이 도는 것을 막는다. 그러나 커밋 · push 확인은
@@ -276,6 +315,10 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
     if 문제:
         # 두 번 되돌려도 안 하면 막지 않는다(끝없이 도는 것을 막는다). 대신 사용자가 알게 한다 — 6판 S8 에서 push 안 된 채 끝났다.
         알림.append("답을 두 번 되돌렸는데도 커밋 · push 가 안 됐다: " + " / ".join(문제))
+    if not 문제:
+        한줄 = 기록커밋(뿌리, c, s)                     # 고친 것이 없고 push 도 끝났을 때만 — 기록이 컴퓨터와 함께 사라지지 않게
+        if 한줄:
+            알림.append(한줄)
     n, 새로 = 어긋남개수(뿌리, c, 다시=True)
     if n:
         알림.append(어긋남한줄(n, 새로))
