@@ -209,6 +209,21 @@ def main() -> int:
                   json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "어제 잰 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
     확인(code == 2 and "상대 날짜" in err, "답 끝에 상대 날짜를 되돌린다")
+    깨진 = r / "ops/lib/대화.py"; 원래 = 깨진.read_text(encoding="utf-8")
+    깨진.write_text("raise RuntimeError('시험용 오류')\n" + 원래, encoding="utf-8")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
+    확인(code == 2 and "훅이 오류로 죽었다" in err, "답 끝 훅이 죽으면 한 번 막아서 모델이 보게 한다")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r), "stop_hook_active": True})
+    확인(code == 0, "되돌린 뒤에는 죽은 훅이 다시 막지 않는다")
+    깨진.write_text(원래, encoding="utf-8")
+    깨진2 = r / "ops/lib/어긋남.py"; 원래2 = 깨진2.read_text(encoding="utf-8")   # 도구 직후는 어긋남 모듈을 쓴다
+    깨진2.write_text("raise RuntimeError('시험용 오류')\n" + 원래2, encoding="utf-8")
+    code, out, err = 훅돌리기(r, "post_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md")}, "cwd": str(r)})
+    확인(code == 0 and "additionalContext" in out and "훅이 오류로 죽었다" in out, "다른 자리에서 죽으면 문맥으로 알린다")
+    깨진2.write_text(원래2, encoding="utf-8")
+    설정 = json.loads((r / ".claude/settings.json").read_text(encoding="utf-8"))
+    답끝시간 = 설정["hooks"]["Stop"][0]["hooks"][0]["timeout"]
+    확인(답끝시간 >= int(공통.설정(틀)["판정"].get("시간") or 90) + 60, "답 끝 훅의 제한 시간이 판정 시간보다 60초 이상 길다")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r), "stop_hook_active": True})
     확인(code == 0, "이미 되돌린 뒤(stop_hook_active)에는 막지 않는다")
     tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +

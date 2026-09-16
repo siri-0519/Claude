@@ -37,9 +37,17 @@ def 돌리기(자리: str, 뿌리: Path) -> int:
     except Exception:  # noqa: BLE001 — 훅이 세션을 죽이면 안 된다
         자리이름 = {"session_start": "세션 시작", "user_prompt_submit": "물음 직전", "pre_tool_use": "도구 직전",
                     "post_tool_use": "도구 직후", "stop": "답 끝"}.get(자리, 자리)
-        print(f"[훅 · {자리이름}] 훅이 오류로 죽었다. 막지 않았고 이번 호출에는 검사가 안 걸렸으니 답을 스스로 한 번 더 본다. "
-              f"오류가 훅 코드(ops/lib/훅.py)의 것이면 고치고, 아니면 사용자에게 알린다. 오류 내용(traceback):\n"
-              + traceback.format_exc()[-600:], file=sys.stderr)
+        글 = (f"[훅 · {자리이름}] 훅이 오류로 죽었다. 이번 호출에는 검사가 하나도 안 걸렸으니 답을 스스로 한 번 더 보고, "
+              f"커밋 · push 도 스스로 한다. 오류가 훅 코드(ops/lib/훅.py)의 것이면 고치고, 아니면 사용자에게 훅이 죽었다고 알린다. "
+              f"오류 내용(traceback):\n" + traceback.format_exc()[-600:])
+        # stderr 에 exit 0 으로 내면 모델이 못 본다 — 2026-09-16 6판 S7 에서 셋 다 훅이 죽은 것을 모른 채 답을 끝냈다.
+        # 답 끝이면 한 번 막아서(exit 2) 보게 하고, 되돌린 뒤(stop_hook_active)에는 다시 막지 않는다. 다른 자리는 문맥으로 넣는다.
+        if 자리 == "stop" and not p.get("stop_hook_active"):
+            print(글, file=sys.stderr)
+            return 2
+        if 자리 in ("session_start", "user_prompt_submit", "pre_tool_use", "post_tool_use"):
+            문맥출력(자리, 글)
+        print(글, file=sys.stderr)
         return 0
 
 
@@ -220,6 +228,15 @@ def 도구직후(뿌리: Path, c: dict, p: dict) -> int:
 
 # --------------------------------------------------------------- 답 끝 ----
 
+def 판정기록(뿌리: Path, 자리: str, 어긴수: int, 오류: str) -> None:
+    """판정이 한 번 돌 때마다 .meta/판정.jsonl 에 한 줄 — 어긴 것만 적는 memory/횟수.jsonl 에는 분모가 없다 (2026-09-16 사용자 물음)."""
+    d = 뿌리 / ".meta"
+    d.mkdir(exist_ok=True)
+    from 공통 import 지금시각
+    with (d / "판정.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"때": 지금시각(), "자리": 자리, "어긴": 어긴수, "오류": 오류 or ""}, ensure_ascii=False) + "\n")
+
+
 def 답끝(뿌리: Path, c: dict, p: dict) -> int:
     import 기계, 낱말, 대화, 판정
     if p.get("stop_hook_active"):
@@ -241,6 +258,7 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
             후보 = 낱말.후보(답, 낱말.아는말(뿌리, c, d["사용자글"], set(d["읽은파일"])))
             바뀐 = [x[3:] for x in git(뿌리, "status", "--porcelain").split("\n") if x.strip()]
             어긴것, 오류 = 판정.부르기(뿌리, 판정.물음(d["물음"], 답, 규칙, 바뀐, 후보[:60], "답"), c)
+            판정기록(뿌리, "답", len(어긴것), 오류)
             if 오류:
                 알림.append(f"판정을 못 했다: {오류}")
             elif 어긴것:
@@ -254,6 +272,9 @@ def 답끝(뿌리: Path, c: dict, p: dict) -> int:
         return 막기("답을 끝내기 전에 커밋하고 push 한다. 이번 요청의 변경은 커밋 하나로 묶고, 메시지 첫 줄은 이번 요청의 핵심이다. "
                   "STATUS.md 와 README.md 는 스크립트가 다른 파일을 읽어 만드는 파일이다 — 그 둘이 스크립트가 만들 결과와 다르면 "
                   "`ops build` 를 먼저 돌려 맞춘 뒤 커밋한다.\n" + "\n".join("- " + x for x in 문제))
+    if 문제:
+        # 두 번 되돌려도 안 하면 막지 않는다(끝없이 도는 것을 막는다). 대신 사용자가 알게 한다 — 6판 S8 에서 push 안 된 채 끝났다.
+        알림.append("답을 두 번 되돌렸는데도 커밋 · push 가 안 됐다: " + " / ".join(문제))
     n, 새로 = 어긋남개수(뿌리, c, 다시=True)
     if n:
         알림.append(어긋남한줄(n, 새로))
