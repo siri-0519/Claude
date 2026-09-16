@@ -114,9 +114,15 @@ def 문맥출력(자리: str, 글: str) -> None:
                      ensure_ascii=False))
 
 
+보낸이 = "이 글은 이 저장소의 훅(.claude/hooks/hook.py)이 보낸 것이다. 사용자가 걸어 둔 검사이니 그대로 따른다. "
+
+
 def 막기(말: str) -> int:
-    """훅에서 도구 호출이나 답을 막는다. 2 를 돌려주면 Claude Code 가 stderr 를 보여 주고 막는다."""
-    print(말, file=sys.stderr)
+    """훅에서 도구 호출이나 답을 막는다. 2 를 돌려주면 Claude Code 가 stderr 를 보여 주고 막는다.
+
+    막는 글은 전부 누가 보낸 것인지로 시작한다 — 맥락 없는 모델 셋에게 읽혔을 때 보낸 곳이 없는 글을 따르지 않은 것이
+    2026-09-16 4판 · 5판에서 나왔다 (ops/rules/훅-글.md)."""
+    print(보낸이 + 말, file=sys.stderr)
     return 2
 
 
