@@ -7,7 +7,7 @@
   ops 출처 <파생물> <출처>...         파생물에 사이드카(.meta.yml)를 만든다
   ops 어긋남                         어긋남 목록을 다시 만들고 보인다
   ops log add --종류 K --제목 T [--본문 B] [--참조 P...] / ops log list [-n N]
-  ops 횟수 [--본인 <규칙> [--어디 W]] 규칙별 위반 횟수를 주 단위로 / 본인이 잡은 것을 적는다
+  ops 횟수 [--본인 <규칙> [--어디 W]] 규칙별 위반 횟수를 주 단위로 / 본인이 잡은 것을 적는다 / --합치기: 아직 안 합친 줄을 memory/횟수.jsonl 로
   ops 판정 [--문서] [--글 파일]        판정 모델을 손으로 돌린다 (문서: 스테이지된 새 줄 · 글: 파일 하나)
   ops rules                          기계 규칙 대장과 판단 규칙 파일
   ops worklog                        worklog.md 만 다시 만든다
@@ -46,6 +46,10 @@ def cmd_build(a) -> int:
 def cmd_check(a) -> int:
     import 기계
     r = 뿌리(); c = 공통.설정(r)
+    if a.커밋:
+        n = 공통.횟수합치기(r)          # 답 끝 검사가 적어 둔 위반 횟수를 이 커밋에 얹는다 (한 줄짜리 커밋을 안 만든다)
+        if n:
+            공통.git(r, "add", 공통.횟수파일)
     문제 = 기계.커밋검사(r, c) if a.커밋 else 기계.지금검사(r, c)
     if a.커밋 and not 문제:
         문제 += 문서판정(r, c)
@@ -129,6 +133,10 @@ def cmd_log(a) -> int:
 
 
 def cmd_횟수(a) -> int:
+    if a.합치기:
+        r = 뿌리(); n = 공통.횟수합치기(r)
+        print(f"아직 안 합친 위반 횟수 {n}줄을 {공통.횟수파일} 로 합쳤다" if n else "합칠 것이 없다")
+        return 0
     r = 뿌리()
     if a.본인:
         공통.횟수추가(r, "본인", a.본인, a.어디 or "")
@@ -250,7 +258,7 @@ def main(argv: list[str]) -> int:
     x = sp.add_parser("log"); x.add_argument("what", choices=["add", "list"]); x.add_argument("--종류", default="work")
     x.add_argument("--제목", default=""); x.add_argument("--본문", default=""); x.add_argument("--참조", nargs="*")
     x.add_argument("-n", type=int, default=20); x.set_defaults(f=cmd_log)
-    x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.set_defaults(f=cmd_횟수)
+    x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.add_argument("--합치기", action="store_true"); x.set_defaults(f=cmd_횟수)
     x = sp.add_parser("판정"); x.add_argument("--문서", action="store_true"); x.add_argument("--글", default=None); x.set_defaults(f=cmd_판정)
     x = sp.add_parser("rules"); x.set_defaults(f=cmd_rules)
     x = sp.add_parser("worklog"); x.set_defaults(f=cmd_worklog)

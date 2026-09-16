@@ -150,7 +150,21 @@ def main() -> int:
         공통.횟수추가(r, "판정", 이름, "걸린 문장")
     공통.횟수추가(r, "기계", "상대날짜")
     요약 = {x[1]: x[2] for x in 공통.횟수요약(r)}
-    확인(요약.get("판정·6") == 3 and 요약.get("기계·상대날짜") == 1, "횟수 표가 같은 규칙을 한 줄로 센다")
+    확인(요약.get("판정·6") == 3 and 요약.get("기계·상대날짜") == 1, "횟수 표가 같은 규칙을 한 줄로 센다 (안 합친 줄도 센다)")
+    확인((r / 공통.횟수대기).is_file() and "횟수.jsonl" not in git(r, "status", "--porcelain"),
+         "어긴 것은 git 이 보지 않는 자리에 적혀 커밋을 만들지 않는다")
+    앞줄수 = len((r / 공통.횟수파일).read_text(encoding="utf-8").splitlines()) if (r / 공통.횟수파일).is_file() else 0
+    확인(공통.횟수합치기(r) == 4 and len((r / 공통.횟수파일).read_text(encoding="utf-8").splitlines()) == 앞줄수 + 4 and not (r / 공통.횟수대기).is_file(),
+         "합치면 memory/횟수.jsonl 로 옮겨지고 대기 파일은 없어진다")
+    ops(r, "build"); git(r, "add", "-A"); git(r, "commit", "-q", "-m", "횟수 합침")
+    공통.횟수추가(r, "판정", "5", "다음 줄")
+    (r / "body.md").write_text((r / "body.md").read_text(encoding="utf-8") + "- 새 줄이다 [제안].\n", encoding="utf-8")
+    ops(r, "build"); git(r, "add", "body.md", "STATUS.md", "README.md", "CLAUDE.md")
+    code, out = ops(r, "check", "--커밋")
+    # git 은 한글 경로를 \355\232… 꼴로 적어 내므로 quotePath 를 끄고 본다
+    확인(code == 0 and "횟수.jsonl" in git(r, "-c", "core.quotePath=false", "diff", "--cached", "--name-only"),
+         "커밋 직전 검사가 안 합친 줄을 그 커밋에 얹는다" + ("" if code == 0 else " — 검사 출력: " + out.replace("\n", " / ")[:300]))
+    git(r, "commit", "-q", "-m", "새 줄과 횟수")
 
     print("커밋 직전 · 대장")
     확인(기계.대장검사(r) == [], "기계 규칙 대장에 네 칸이 다 있다")

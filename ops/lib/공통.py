@@ -172,19 +172,45 @@ def 로그읽기(뿌리: Path, n: int = 20) -> list[dict]:
     return 항들[-n:]
 
 
+횟수파일 = "memory/횟수.jsonl"
+횟수대기 = ".meta/횟수.new.jsonl"   # git 이 보지 않는 자리. 커밋 직전에 횟수파일로 합친다
+
+
 def 횟수추가(뿌리: Path, 누가: str, 규칙: str, 어디: str = "") -> None:
-    d = 뿌리 / "memory"
-    d.mkdir(exist_ok=True)
+    """어긴 것 한 줄. 바로 memory/횟수.jsonl 에 적으면 그 파일이 고쳐진 상태가 되어 답 끝 검사가 커밋을 시키고, 그 커밋이
+    GitHub 검사를 깨우고, 그 검사가 세션을 깨우고, 그 답이 다시 걸려 또 한 줄이 된다 — 2026-09-16 한 브랜치의 커밋 17개 가운데
+    12개가 그렇게 생겼다. 그래서 git 이 보지 않는 .meta/ 에 두고, 다음 진짜 커밋 직전(ops check --커밋)에 합친다."""
+    p = 뿌리 / 횟수대기
+    p.parent.mkdir(exist_ok=True)
     항 = {"날": 오늘(), "누가": 누가, "규칙": 규칙}
     if 어디:
         항["어디"] = 어디
-    with (d / "횟수.jsonl").open("a", encoding="utf-8") as f:
+    with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(항, ensure_ascii=False) + "\n")
 
 
+def 횟수합치기(뿌리: Path) -> int:
+    """.meta/횟수.new.jsonl 의 줄을 memory/횟수.jsonl 뒤에 붙이고 대기 파일을 지운다. 옮긴 줄 수를 돌려준다."""
+    대기 = 뿌리 / 횟수대기
+    if not 대기.is_file():
+        return 0
+    줄들 = [x for x in 대기.read_text(encoding="utf-8").splitlines() if x.strip()]
+    if 줄들:
+        p = 뿌리 / 횟수파일
+        p.parent.mkdir(exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write("\n".join(줄들) + "\n")
+    대기.unlink()
+    return len(줄들)
+
+
 def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
-    p = 뿌리 / "memory" / "횟수.jsonl"
-    if not p.is_file():
+    줄들: list[str] = []
+    for 이름 in (횟수파일, 횟수대기):        # 합친 것과 아직 안 합친 것을 같이 센다
+        p = 뿌리 / 이름
+        if p.is_file():
+            줄들 += p.read_text(encoding="utf-8").splitlines()
+    if not 줄들:
         return []
     from collections import Counter
     import 판정
@@ -192,7 +218,7 @@ def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
     # 판정 모델이 같은 규칙을 제각각 불러서 쌓인 줄이 있다. 셀 때 대장의 번호로 맞춰야 규칙별 횟수가 나온다
     # (2026-09-16: "6" · "6. 아는 말만 쓴다" · "6 (아는 말만 쓴다)" 가 세 줄이었다). 적은 줄은 그대로 둔다.
     맞춤: dict[str, str] = {}
-    for ln in p.read_text(encoding="utf-8").splitlines():
+    for ln in 줄들:
         try:
             d = json.loads(ln)
         except ValueError:
