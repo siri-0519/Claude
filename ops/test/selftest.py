@@ -216,6 +216,13 @@ def main() -> int:
     code, out, err = 훅돌리기(r, "user_prompt_submit", {"cwd": str(r)})
     확인(code == 0 and "어긋남" in out, "물음 직전에 어긋남 개수 한 줄이 들어간다")
 
+    x = subprocess.run([sys.executable, str(r / "ops/bin/ops"), "hooks", "--push"], cwd=str(r), text=True, capture_output=True,
+                       input="refs/heads/claude/x " + "1" * 40 + " refs/heads/main " + "0" * 40 + "\n")
+    확인(x.returncode == 1 and "main" in x.stderr, "push 직전에 main 으로 직접 가는 push 를 막는다")
+    x = subprocess.run([sys.executable, str(r / "ops/bin/ops"), "hooks", "--push"], cwd=str(r), text=True, capture_output=True,
+                       input="refs/heads/claude/x " + "1" * 40 + " refs/heads/claude/x " + "0" * 40 + "\n")
+    확인(x.returncode == 0, "세션 브랜치로 가는 새 push 는 막지 않는다")
+
     shutil.rmtree(r, ignore_errors=True)
     print(f"\n{'전부 통과' if not 실패 else str(len(실패)) + '개 실패: ' + ' / '.join(실패)}")
     return 1 if 실패 else 0

@@ -165,7 +165,8 @@ def 목록(뿌리: Path, c: dict | None = None) -> tuple[str, list[str], dict[st
     else:
         줄.append("없다.")
     줄 += ["", "## 기본 브랜치에 안 합쳐진 세션 브랜치", "",
-           "합칠지는 사용자가 정한다. 사용자가 합치라고 하면 `git merge <브랜치>` 로 합치고 push 한다.", ""]
+           "합칠지는 사용자가 정한다. 검사 · 훅 · 규칙 · 설정을 바꾼 브랜치는 sync-main 워크플로가 PR 로 잡아 둔 것이라 사용자가 GitHub 웹에서 merge 한다. "
+           "그 밖의 브랜치는 사용자가 합치라고 하면 `git merge <브랜치>` 로 이 세션 브랜치에 합치고 push 한다. main 에 직접 push 하지 않는다.", ""]
     가지 = 브랜치항들(뿌리, c)
     if 가지:
         for b in 가지:
