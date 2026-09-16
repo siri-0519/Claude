@@ -181,7 +181,11 @@ def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
     if not p.is_file():
         return []
     from collections import Counter
+    import 판정
     c: Counter = Counter()
+    # 판정 모델이 같은 규칙을 제각각 불러서 쌓인 줄이 있다. 셀 때 대장의 번호로 맞춰야 규칙별 횟수가 나온다
+    # (2026-09-16: "6" · "6. 아는 말만 쓴다" · "6 (아는 말만 쓴다)" 가 세 줄이었다). 적은 줄은 그대로 둔다.
+    맞춤: dict[str, str] = {}
     for ln in p.read_text(encoding="utf-8").splitlines():
         try:
             d = json.loads(ln)
@@ -191,7 +195,12 @@ def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
             y, w, _ = date.fromisoformat(d["날"]).isocalendar()
         except (KeyError, ValueError):
             continue
-        c[(f"{y}-W{w:02d}", f"{d.get('누가','?')}·{d.get('규칙','?')}")] += 1
+        이름 = str(d.get("규칙", "?"))
+        if d.get("누가") == "판정":
+            if 이름 not in 맞춤:
+                맞춤[이름] = 판정.이름맞추기(뿌리, 이름)
+            이름 = 맞춤[이름]
+        c[(f"{y}-W{w:02d}", f"{d.get('누가','?')}·{이름}")] += 1
     항 = sorted(c.items(), reverse=True)
     return [(k[0], k[1], v) for k, v in 항][: 40]
 
