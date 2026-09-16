@@ -142,6 +142,34 @@ def main() -> int:
     확인(판정.풀기('앞말 {"어긴것": [{"규칙": "6", "문장": "사다리 훈련", "이유": "이름"}]} 뒷말')[0]["규칙"] == "6", "판정 결과를 푼다")
     확인(판정.풀기("아무것도 아님") == [], "JSON 이 없으면 빈 목록이다")
     확인("답할 때" in 판정.규칙글(r, "답할 때") and "고칠 때" not in 판정.규칙글(r, "답할 때"), "규칙 파일에서 「용어」와 「답할 때」만 뽑는다")
+    확인(판정.이름맞추기(r, "6. 아는 말만 쓴다") == "6" and 판정.이름맞추기(r, "6 (아는 말만 쓴다)") == "6"
+         and 판정.이름맞추기(r, "규칙 5") == "5" and 판정.이름맞추기(r, "아는 말만 쓴다") == "6",
+         "판정이 부른 규칙 이름을 대장의 번호로 맞춘다")
+    확인(판정.이름맞추기(r, "한 줄에는 표시 하나만 붙인다") == "한 줄에는 표시 하나만 붙인다", "대장에 없는 이름은 그대로 둔다")
+    for 이름 in ("6", "6. 아는 말만 쓴다", "6 (아는 말만 쓴다)"):
+        공통.횟수추가(r, "판정", 이름, "걸린 문장")
+    공통.횟수추가(r, "기계", "상대날짜")
+    요약 = {x[1]: x[2] for x in 공통.횟수요약(r)}
+    확인(요약.get("판정·6") == 3 and 요약.get("기계·상대날짜") == 1, "횟수 표가 같은 규칙을 한 줄로 센다 (안 합친 줄도 센다)")
+    확인((r / 공통.횟수대기).is_file() and "횟수.jsonl" not in git(r, "status", "--porcelain"),
+         "어긴 것은 git 이 보지 않는 자리에 적혀 커밋을 만들지 않는다")
+    앞줄수 = len((r / 공통.횟수파일).read_text(encoding="utf-8").splitlines()) if (r / 공통.횟수파일).is_file() else 0
+    확인(공통.횟수합치기(r) >= 4 and len((r / 공통.횟수파일).read_text(encoding="utf-8").splitlines()) == 앞줄수 + 4 and not (r / 공통.횟수대기).is_file(),
+         "합치면 memory/횟수.jsonl 로 옮겨지고 대기 파일은 없어진다 (문맥 · 판정 기록도 같이 합쳐진다)")
+    ops(r, "build"); git(r, "add", "-A"); git(r, "commit", "-q", "-m", "횟수 합침")
+    공통.횟수추가(r, "판정", "5", "다음 줄")
+    (r / "body.md").write_text((r / "body.md").read_text(encoding="utf-8") + "- 새 줄이다 [제안].\n", encoding="utf-8")
+    ops(r, "build"); git(r, "add", "body.md", "STATUS.md", "README.md", "CLAUDE.md")
+    code, out = ops(r, "check", "--커밋")
+    # git 은 한글 경로를 \355\232… 꼴로 적어 내므로 quotePath 를 끄고 본다
+    확인(code == 0 and "횟수.jsonl" in git(r, "-c", "core.quotePath=false", "diff", "--cached", "--name-only"),
+         "커밋 직전 검사가 안 합친 줄을 그 커밋에 얹는다" + ("" if code == 0 else " — 검사 출력: " + out.replace("\n", " / ")[:300]))
+    git(r, "commit", "-q", "-m", "새 줄과 횟수")
+    code, out, err = 훅돌리기(r, "user_prompt_submit", {"cwd": str(r)})
+    문맥 = 공통.기록읽기(r, "문맥")
+    확인(any(d.get("자리") == "user_prompt_submit" for d in 문맥) and all(int(d.get("바이트", 0)) > 0 for d in 문맥), "훅이 넣은 글의 크기가 기록된다")
+    code, out = ops(r, "토큰")
+    확인(code == 0 and "user_prompt_submit" in out, "ops 토큰 이 날 · 자리별 크기를 보인다")
 
     print("커밋 직전 · 대장")
     확인(기계.대장검사(r) == [], "기계 규칙 대장에 네 칸이 다 있다")
@@ -200,8 +228,23 @@ def main() -> int:
                   json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "어제 잰 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
     확인(code == 2 and "상대 날짜" in err, "답 끝에 상대 날짜를 되돌린다")
+    깨진 = r / "ops/lib/대화.py"; 원래 = 깨진.read_text(encoding="utf-8")
+    깨진.write_text("raise RuntimeError('시험용 오류')\n" + 원래, encoding="utf-8")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
+    확인(code == 2 and "훅이 오류로 죽었다" in err, "답 끝 훅이 죽으면 한 번 막아서 모델이 보게 한다")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r), "stop_hook_active": True})
-    확인(code == 0, "이미 되돌린 뒤(stop_hook_active)에는 막지 않는다")
+    확인(code == 0, "되돌린 뒤에는 죽은 훅이 다시 막지 않는다")
+    깨진.write_text(원래, encoding="utf-8")
+    깨진2 = r / "ops/lib/어긋남.py"; 원래2 = 깨진2.read_text(encoding="utf-8")   # 도구 직후는 어긋남 모듈을 쓴다
+    깨진2.write_text("raise RuntimeError('시험용 오류')\n" + 원래2, encoding="utf-8")
+    code, out, err = 훅돌리기(r, "post_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md")}, "cwd": str(r)})
+    확인(code == 0 and "additionalContext" in out and "훅이 오류로 죽었다" in out, "다른 자리에서 죽으면 문맥으로 알린다")
+    깨진2.write_text(원래2, encoding="utf-8")
+    설정 = json.loads((r / ".claude/settings.json").read_text(encoding="utf-8"))
+    답끝시간 = 설정["hooks"]["Stop"][0]["hooks"][0]["timeout"]
+    확인(답끝시간 >= int(공통.설정(틀)["판정"].get("시간") or 90) + 60, "답 끝 훅의 제한 시간이 판정 시간보다 60초 이상 길다")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r), "stop_hook_active": True})
+    확인("상대 날짜" not in err and code == 2 and "커밋하고 push" in err, "되돌린 뒤에는 상대 날짜로 다시 막지 않지만 커밋 · push 는 그대로 본다")
     tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
                   json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "2026-09-01 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     (r / ".meta").mkdir(exist_ok=True)

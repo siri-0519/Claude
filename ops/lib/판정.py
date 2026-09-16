@@ -43,7 +43,8 @@ def 규칙글(뿌리: Path, 절: str) -> str:
 
 def 물음(요청: str, 답: str, 규칙: str, 바뀐파일: list[str], 낱말후보: list[str], 자리: str) -> str:
     머리 = ("아래 규칙으로 아래 글을 판정한다. 어긴 규칙과 어긴 문장만 JSON 으로 돌려준다.\n"
-            '형식: {"어긴것": [{"규칙": "<규칙 번호나 이름>", "문장": "<어긴 문장을 그대로>", "이유": "<한 문장>"}]}\n'
+            '형식: {"어긴것": [{"규칙": "<규칙 번호>", "문장": "<어긴 문장을 그대로>", "이유": "<한 문장>"}]}\n'
+            '"규칙" 칸에는 번호만 적는다 (보기: "5"). 규칙 이름이나 규칙 문장을 덧붙이지 않는다.\n'
             '어긴 것이 없으면 {"어긴것": []} 만 돌려준다. JSON 밖에 아무것도 쓰지 않는다.\n'
             "규칙에 없는 것으로 판정하지 않는다. 확실하지 않으면 어긴 것에 넣지 않는다.\n"
             "글 전체를 읽고 판정한다. 한 문장에 빠진 근거나 표시가 바로 앞뒤 문장에 있으면 어긴 것이 아니다. "
@@ -98,7 +99,10 @@ def 부르기(뿌리: Path, 글: str, c: dict | None = None) -> tuple[list[dict]
         shutil.rmtree(빈곳, ignore_errors=True)
     if r.returncode != 0:
         return [], f"판정 명령이 실패했다: {(r.stderr or r.stdout).strip()[:200]}"
-    return 풀기(r.stdout), ""
+    걸린 = 풀기(r.stdout)
+    for x in 걸린:
+        x["규칙"] = 이름맞추기(뿌리, x["규칙"])
+    return 걸린, ""
 
 
 def 풀기(out: str) -> list[dict]:
@@ -132,6 +136,31 @@ def 규칙전문들(뿌리: Path) -> dict[str, str]:
 def 규칙이름들(뿌리: Path) -> dict[str, str]:
     """번호 → 규칙의 첫 문장(이름)."""
     return {k: v.split(".")[0].strip() for k, v in 규칙전문들(뿌리).items()}
+
+
+def _납작(t: str) -> str:
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", t)
+
+
+def 이름맞추기(뿌리: Path, 이름: str) -> str:
+    """판정 모델이 부른 규칙 이름을 대장의 번호로 맞춘다.
+
+    같은 규칙을 판마다 다르게 부른다 — "6" · "6. 아는 말만 쓴다" · "6 (아는 말만 쓴다)" 가 `ops 횟수` 표에서 세 줄로
+    갈려서 규칙별 횟수가 나오지 않았다 (2026-09-16 memory/횟수.jsonl). 번호가 앞에 있으면 그 번호로, 없으면 규칙의 첫
+    문장과 맞춰 본다. 대장에 없는 이름은 그대로 둔다 — 규칙이 아닌 것으로 판정한 횟수도 표에 보여야 한다.
+    """
+    s = re.sub(r"^[\s·\-]*(?:규칙|공용)[\s·\-]*", "", str(이름)).strip()
+    전문 = 규칙전문들(뿌리)
+    m = re.match(r"(\d+)", s)
+    if m and m.group(1) in 전문:
+        return m.group(1)
+    바닥 = _납작(s)
+    if len(바닥) >= 6:
+        for 번호, 글 in 전문.items():
+            이름칸 = _납작(글.split(".")[0])
+            if 이름칸 and (이름칸 in 바닥 or 바닥 in 이름칸):
+                return 번호
+    return s
 
 
 def 되돌리는말(어긴것: list[dict], 뿌리: Path | None = None) -> str:

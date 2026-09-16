@@ -7,7 +7,8 @@
   ops 출처 <파생물> <출처>...         파생물에 사이드카(.meta.yml)를 만든다
   ops 어긋남                         어긋남 목록을 다시 만들고 보인다
   ops log add --종류 K --제목 T [--본문 B] [--참조 P...] / ops log list [-n N]
-  ops 횟수 [--본인 <규칙> [--어디 W]] 규칙별 위반 횟수를 주 단위로 / 본인이 잡은 것을 적는다
+  ops 토큰                            훅이 문맥에 넣거나 막으며 보낸 글의 크기(날 · 자리별)와 판정을 시킨 횟수
+  ops 횟수 [--본인 <규칙> [--어디 W]] 규칙별 위반 횟수를 주 단위로 / 본인이 잡은 것을 적는다 / --합치기: 아직 안 합친 줄을 memory/횟수.jsonl 로
   ops 판정 [--문서] [--글 파일]        판정 모델을 손으로 돌린다 (문서: 스테이지된 새 줄 · 글: 파일 하나)
   ops rules                          기계 규칙 대장과 판단 규칙 파일
   ops worklog                        worklog.md 만 다시 만든다
@@ -46,11 +47,15 @@ def cmd_build(a) -> int:
 def cmd_check(a) -> int:
     import 기계
     r = 뿌리(); c = 공통.설정(r)
+    if a.커밋:
+        n = 공통.횟수합치기(r)          # 답 끝 검사가 적어 둔 기록(위반 횟수 · 판정 · 문맥 크기)을 이 커밋에 얹는다 (한 줄짜리 커밋을 안 만든다)
+        if n:
+            공통.git(r, "add", *[파일 for 파일, _ in 공통.기록들.values() if (r / 파일).is_file()])
     문제 = 기계.커밋검사(r, c) if a.커밋 else 기계.지금검사(r, c)
     if a.커밋 and not 문제:
         문제 += 문서판정(r, c)
     if 문제:
-        머리 = "커밋 전에 걸렸다. 항마다 적힌 대로 고치고 다시 커밋한다:" if a.커밋 else "지금 걸리는 것 (항마다 적힌 대로 고친다):"
+        머리 = 공통.보낸이 + "커밋 전에 걸렸다. 항마다 적힌 대로 고치고 다시 커밋한다. 누구의 말인지 모르면 [제안] 을 붙이고 사용자에게 되묻지 않는다:" if a.커밋 else "지금 걸리는 것 (항마다 적힌 대로 고친다):"
         print(머리 + "\n" + "\n".join("- " + x for x in 문제))
         return 1
     print("걸리는 것이 없다")
@@ -128,7 +133,36 @@ def cmd_log(a) -> int:
     return 0
 
 
+def cmd_토큰(a) -> int:
+    """훅이 문맥에 넣거나 막으며 보낸 글의 크기 — 날 · 자리별 합과 횟수. 판정을 시킨 횟수도 같이 (어긴 횟수의 분모)."""
+    r = 뿌리()
+    from collections import defaultdict
+    합: dict = defaultdict(lambda: [0, 0])
+    for d in 공통.기록읽기(r, "문맥"):
+        k = (str(d.get("때", ""))[:10], f"{d.get('자리','?')}·{d.get('어떻게','?')}")
+        합[k][0] += int(d.get("바이트") or 0); 합[k][1] += 1
+    if not 합:
+        print("적힌 것이 없다 — 훅이 글을 넣을 때마다 .meta/문맥.new.jsonl 에 쌓이고 커밋 직전에 memory/문맥.jsonl 로 합쳐진다")
+    else:
+        print("| 날 | 자리·어떻게 | 바이트 | 번 |\n|---|---|---|---|")
+        for (날, 자리), (b, n) in sorted(합.items(), reverse=True)[:60]:
+            print(f"| {날} | {자리} | {b} | {n} |")
+    판정들 = 공통.기록읽기(r, "판정")
+    if 판정들:
+        날별: dict = defaultdict(lambda: [0, 0])
+        for d in 판정들:
+            k = str(d.get("때", ""))[:10]; 날별[k][0] += 1; 날별[k][1] += 1 if int(d.get("어긴") or 0) else 0
+        print("\n판정을 시킨 횟수(날 · 시킨 번 · 어긴 것이 있던 번):")
+        for 날, (n, m) in sorted(날별.items(), reverse=True)[:30]:
+            print(f"- {날}: {n}번 시켜 {m}번 걸렸다")
+    return 0
+
+
 def cmd_횟수(a) -> int:
+    if a.합치기:
+        r = 뿌리(); n = 공통.횟수합치기(r)
+        print(f"아직 안 합친 위반 횟수 {n}줄을 {공통.횟수파일} 로 합쳤다" if n else "합칠 것이 없다")
+        return 0
     r = 뿌리()
     if a.본인:
         공통.횟수추가(r, "본인", a.본인, a.어디 or "")
@@ -234,7 +268,7 @@ def push검사(r: Path) -> int:
                 막힘.append(f"{rref} 의 이력을 다시 쓰는 push 다. 원격의 커밋 {rsha[:7]} 이 보내려는 {lsha[:7]} 에 들어 있지 않아서 원격 커밋이 사라진다. "
                             "먼저 `git pull --no-rebase` 로 원격을 합친 뒤 보통 push 를 한다")
     if 막힘:
-        print("push 를 막았다. 이 push 는 포기한다:\n" + "\n".join("- " + x for x in 막힘), file=sys.stderr)
+        print(공통.보낸이 + "push 를 막았다. 이 push 는 포기한다:\n" + "\n".join("- " + x for x in 막힘), file=sys.stderr)
         return 1
     return 0
 
@@ -250,7 +284,8 @@ def main(argv: list[str]) -> int:
     x = sp.add_parser("log"); x.add_argument("what", choices=["add", "list"]); x.add_argument("--종류", default="work")
     x.add_argument("--제목", default=""); x.add_argument("--본문", default=""); x.add_argument("--참조", nargs="*")
     x.add_argument("-n", type=int, default=20); x.set_defaults(f=cmd_log)
-    x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.set_defaults(f=cmd_횟수)
+    x = sp.add_parser("토큰"); x.set_defaults(f=cmd_토큰)
+    x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.add_argument("--합치기", action="store_true"); x.set_defaults(f=cmd_횟수)
     x = sp.add_parser("판정"); x.add_argument("--문서", action="store_true"); x.add_argument("--글", default=None); x.set_defaults(f=cmd_판정)
     x = sp.add_parser("rules"); x.set_defaults(f=cmd_rules)
     x = sp.add_parser("worklog"); x.set_defaults(f=cmd_worklog)

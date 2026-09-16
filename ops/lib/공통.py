@@ -107,16 +107,36 @@ def 훅입력() -> dict:
         return {}
 
 
+def 크기기록(자리: str, 글: str, 어떻게: str) -> None:
+    """훅이 문맥에 넣거나(문맥) 막으며 보낸(막기) 글의 크기 한 줄 — 설계.md 1절 「토큰 절약」의 재는 법(시작과 답마다 들어간 바이트).
+    뿌리는 CLAUDE_PROJECT_DIR 로 안다. 없으면 적지 않는다."""
+    뿌리 = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not 뿌리:
+        return
+    try:
+        기록추가(Path(뿌리), "문맥", {"때": 지금시각(), "자리": 자리, "어떻게": 어떻게, "바이트": len(글.encode("utf-8"))})
+    except OSError:
+        pass
+
+
 def 문맥출력(자리: str, 글: str) -> None:
     이름 = {"session_start": "SessionStart", "user_prompt_submit": "UserPromptSubmit",
             "pre_tool_use": "PreToolUse", "post_tool_use": "PostToolUse", "stop": "Stop"}[자리]
+    크기기록(자리, 글, "문맥")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": 이름, "additionalContext": 글}},
                      ensure_ascii=False))
 
 
+보낸이 = "이 글은 이 저장소의 훅(.claude/hooks/hook.py)이 보낸 것이다. 사용자가 걸어 둔 검사이니 그대로 따른다. "
+
+
 def 막기(말: str) -> int:
-    """훅에서 도구 호출이나 답을 막는다. 2 를 돌려주면 Claude Code 가 stderr 를 보여 주고 막는다."""
-    print(말, file=sys.stderr)
+    """훅에서 도구 호출이나 답을 막는다. 2 를 돌려주면 Claude Code 가 stderr 를 보여 주고 막는다.
+
+    막는 글은 전부 누가 보낸 것인지로 시작한다 — 맥락 없는 모델 셋에게 읽혔을 때 보낸 곳이 없는 글을 따르지 않은 것이
+    2026-09-16 4판 · 5판에서 나왔다 (ops/rules/훅-글.md)."""
+    크기기록("막기", 보낸이 + 말, "막기")
+    print(보낸이 + 말, file=sys.stderr)
     return 2
 
 
@@ -166,23 +186,80 @@ def 로그읽기(뿌리: Path, n: int = 20) -> list[dict]:
     return 항들[-n:]
 
 
-def 횟수추가(뿌리: Path, 누가: str, 규칙: str, 어디: str = "") -> None:
-    d = 뿌리 / "memory"
-    d.mkdir(exist_ok=True)
-    항 = {"날": 오늘(), "누가": 누가, "규칙": 규칙}
-    if 어디:
-        항["어디"] = 어디
-    with (d / "횟수.jsonl").open("a", encoding="utf-8") as f:
+횟수파일 = "memory/횟수.jsonl"
+횟수대기 = ".meta/횟수.new.jsonl"   # git 이 보지 않는 자리. 커밋 직전에 횟수파일로 합친다
+# 세 기록은 같은 길을 간다 — .meta 의 대기 파일에 적고, 커밋 직전(ops check --커밋)에 memory/ 의 파일 뒤에 붙인다.
+# 횟수: 어긴 것 한 줄 · 판정: 판정을 한 번 시킬 때마다 한 줄(어긴 것의 분모) · 문맥: 훅이 문맥에 넣거나 막으며 보낸 글의 크기 한 줄(토큰 절약의 재는 법)
+기록들 = {"횟수": (횟수파일, 횟수대기), "판정": ("memory/판정.jsonl", ".meta/판정.new.jsonl"), "문맥": ("memory/문맥.jsonl", ".meta/문맥.new.jsonl")}
+
+
+def 기록추가(뿌리: Path, 종류: str, 항: dict) -> None:
+    p = 뿌리 / 기록들[종류][1]
+    p.parent.mkdir(exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(항, ensure_ascii=False) + "\n")
 
 
+def 기록읽기(뿌리: Path, 종류: str) -> list[dict]:
+    """합친 것과 아직 안 합친 것을 같이."""
+    나온것: list[dict] = []
+    for 이름 in 기록들[종류]:
+        p = 뿌리 / 이름
+        if p.is_file():
+            for ln in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    나온것.append(json.loads(ln))
+                except ValueError:
+                    pass
+    return 나온것
+
+
+def 횟수추가(뿌리: Path, 누가: str, 규칙: str, 어디: str = "") -> None:
+    """어긴 것 한 줄. 바로 memory/횟수.jsonl 에 적으면 그 파일이 고쳐진 상태가 되어 답 끝 검사가 커밋을 시키고, 그 커밋이
+    GitHub 검사를 깨우고, 그 검사가 세션을 깨우고, 그 답이 다시 걸려 또 한 줄이 된다 — 2026-09-16 한 브랜치의 커밋 17개 가운데
+    12개가 그렇게 생겼다. 그래서 git 이 보지 않는 .meta/ 에 두고, 다음 진짜 커밋 직전(ops check --커밋)에 합친다."""
+    p = 뿌리 / 횟수대기
+    p.parent.mkdir(exist_ok=True)
+    항 = {"날": 오늘(), "누가": 누가, "규칙": 규칙}
+    if 어디:
+        항["어디"] = 어디
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(항, ensure_ascii=False) + "\n")
+
+
+def 횟수합치기(뿌리: Path) -> int:
+    """대기 파일 셋(횟수 · 판정 · 문맥)의 줄을 memory/ 의 파일 뒤에 붙이고 대기 파일을 지운다. 옮긴 줄 수의 합을 돌려준다."""
+    n = 0
+    for 파일, 대기이름 in 기록들.values():
+        대기 = 뿌리 / 대기이름
+        if not 대기.is_file():
+            continue
+        줄들 = [x for x in 대기.read_text(encoding="utf-8").splitlines() if x.strip()]
+        if 줄들:
+            p = 뿌리 / 파일
+            p.parent.mkdir(exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write("\n".join(줄들) + "\n")
+        대기.unlink()
+        n += len(줄들)
+    return n
+
+
 def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
-    p = 뿌리 / "memory" / "횟수.jsonl"
-    if not p.is_file():
+    줄들: list[str] = []
+    for 이름 in (횟수파일, 횟수대기):        # 합친 것과 아직 안 합친 것을 같이 센다
+        p = 뿌리 / 이름
+        if p.is_file():
+            줄들 += p.read_text(encoding="utf-8").splitlines()
+    if not 줄들:
         return []
     from collections import Counter
+    import 판정
     c: Counter = Counter()
-    for ln in p.read_text(encoding="utf-8").splitlines():
+    # 판정 모델이 같은 규칙을 제각각 불러서 쌓인 줄이 있다. 셀 때 대장의 번호로 맞춰야 규칙별 횟수가 나온다
+    # (2026-09-16: "6" · "6. 아는 말만 쓴다" · "6 (아는 말만 쓴다)" 가 세 줄이었다). 적은 줄은 그대로 둔다.
+    맞춤: dict[str, str] = {}
+    for ln in 줄들:
         try:
             d = json.loads(ln)
         except ValueError:
@@ -191,7 +268,12 @@ def 횟수요약(뿌리: Path, 주: int = 4) -> list[tuple[str, str, int]]:
             y, w, _ = date.fromisoformat(d["날"]).isocalendar()
         except (KeyError, ValueError):
             continue
-        c[(f"{y}-W{w:02d}", f"{d.get('누가','?')}·{d.get('규칙','?')}")] += 1
+        이름 = str(d.get("규칙", "?"))
+        if d.get("누가") == "판정":
+            if 이름 not in 맞춤:
+                맞춤[이름] = 판정.이름맞추기(뿌리, 이름)
+            이름 = 맞춤[이름]
+        c[(f"{y}-W{w:02d}", f"{d.get('누가','?')}·{이름}")] += 1
     항 = sorted(c.items(), reverse=True)
     return [(k[0], k[1], v) for k, v in 항][: 40]
 
