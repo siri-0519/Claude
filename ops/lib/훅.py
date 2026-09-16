@@ -239,14 +239,15 @@ def 판정기록(뿌리: Path, 자리: str, 어긴수: int, 오류: str) -> None
 
 def 답끝(뿌리: Path, c: dict, p: dict) -> int:
     import 기계, 낱말, 대화, 판정
-    if p.get("stop_hook_active"):
-        return 0
+    # 되돌린 뒤(stop_hook_active)에는 상대 날짜와 판정으로 다시 막지 않는다 — 끝없이 도는 것을 막는다. 그러나 커밋 · push 확인은
+    # 그대로 한다: 판정이 한 번 막으면 다음 답 끝이 통째로 건너뛰어져 push 없이 끝난 것이 2026-09-16 6판 S8 에서 나왔다.
+    되돌린뒤 = bool(p.get("stop_hook_active"))
     t = p.get("transcript_path") or ""
     d = 대화.훑기(Path(t)) if t and Path(t).is_file() else {"답": "", "물음": "", "사용자글": [], "읽은파일": set(), "고친파일": set()}
     답 = d["답"]
     s = 상태읽기(뿌리, 세션파일)
     알림: list[str] = []
-    if 답:
+    if 답 and not 되돌린뒤:
         걸린 = 기계.상대날짜(답, c)
         if 걸린:
             횟수추가(뿌리, "기계", "상대날짜")

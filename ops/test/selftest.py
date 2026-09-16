@@ -225,7 +225,7 @@ def main() -> int:
     답끝시간 = 설정["hooks"]["Stop"][0]["hooks"][0]["timeout"]
     확인(답끝시간 >= int(공통.설정(틀)["판정"].get("시간") or 90) + 60, "답 끝 훅의 제한 시간이 판정 시간보다 60초 이상 길다")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r), "stop_hook_active": True})
-    확인(code == 0, "이미 되돌린 뒤(stop_hook_active)에는 막지 않는다")
+    확인("상대 날짜" not in err and code == 2 and "커밋하고 push" in err, "되돌린 뒤에는 상대 날짜로 다시 막지 않지만 커밋 · push 는 그대로 본다")
     tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
                   json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "2026-09-01 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     (r / ".meta").mkdir(exist_ok=True)
