@@ -44,7 +44,7 @@ def 시험레포(이름: str, 판정: bool) -> tuple[Path, Path]:
     (d / ".ops.yml").write_text("이름: 시험\n소개: 시험 레포다.\n주제파일: ['*.md']\n결정로그: ''\n"
                                 "목차:\n  - 말: 몸 · 허리 · 걷기\n    파일: body.md\n"
                                 f"판정:\n  끄기: {'false' if 판정 else 'true'}\n  시간: 300\n" +
-                                "".join("  " + x.strip() + "\n" for x in os.environ.get("OPS_SIM_판정", "").split(";") if x.strip()),   # 보기: OPS_SIM_판정="답규칙넣기: true"
+                                "".join("  " + x.strip() + "\n" for x in os.environ.get("OPS_SIM_JUDGE", "").split(";") if x.strip()),   # 보기: OPS_SIM_JUDGE="답규칙넣기: true" (환경 변수 이름은 영문이어야 셸이 받는다)
                                 encoding="utf-8")
     shutil.copy(틀 / ".gitignore", d / ".gitignore")
     (d / "CLAUDE.md").write_text("# 목차\n\n규칙은 `ops/rules/` 에 있다. 이 파일은 어디에 뭐가 있는지만 적는다.\n\n"
