@@ -134,7 +134,7 @@ def cmd_log(a) -> int:
 
 
 def cmd_토큰(a) -> int:
-    """훅이 문맥에 넣거나 막으며 보낸 글의 크기 — 날 · 자리별 합과 횟수. 판정을 시킨 횟수도 같이 (어긴 횟수의 분모)."""
+    """훅이 문맥에 넣거나 막으며 보낸 글의 크기와 Read 한 파일의 바이트 — 날 · 자리별 합과 횟수, 파일별 합. 판정을 시킨 횟수도 같이 (어긴 횟수의 분모)."""
     r = 뿌리()
     from collections import defaultdict
     합: dict = defaultdict(lambda: [0, 0])
@@ -147,6 +147,14 @@ def cmd_토큰(a) -> int:
         print("| 날 | 자리·어떻게 | 바이트 | 번 |\n|---|---|---|---|")
         for (날, 자리), (b, n) in sorted(합.items(), reverse=True)[:60]:
             print(f"| {날} | {자리} | {b} | {n} |")
+    읽기 = [d for d in 공통.기록읽기(r, "문맥") if d.get("자리") == "읽기"]
+    if 읽기:
+        파일별: dict = defaultdict(lambda: [0, 0, 0])
+        for d in 읽기:
+            k = str(d.get("파일", "?")); 파일별[k][0] += int(d.get("바이트") or 0); 파일별[k][1] += 1; 파일별[k][2] += 1 if d.get("어떻게") == "일부" else 0
+        print("\n읽은 파일(바이트 합이 큰 순 · 읽은 번 · 그 가운데 일부만 읽은 번). 자주 일부만 읽히는 파일은 두 일의 글이 섞였는지 본다 — 나눌지는 사용자가 정한다:")
+        for k, (b, n, m) in sorted(파일별.items(), key=lambda x: -x[1][0])[:20]:
+            print(f"- {k}: {b} 바이트 · {n}번 · 일부 {m}번")
     판정들 = 공통.기록읽기(r, "판정")
     if 판정들:
         날별: dict = defaultdict(lambda: [0, 0])

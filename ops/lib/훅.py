@@ -203,8 +203,38 @@ def 도구직전(뿌리: Path, c: dict, p: dict) -> int:
 
 # ----------------------------------------------------------- 도구 직후 ----
 
+def 읽기기록(뿌리: Path, p: dict) -> None:
+    """Read 마다 어느 파일을 몇 바이트 읽었나 — 토큰 절약의 재는 법(설계 1절)에서 빠져 있던 것. 2026-09-03 creation 에서 사용자가 손으로 센
+    「큰 파일을 통째로 읽는 것이 가장 크다」를 훅이 늘 센다. 커밋 직전에 memory/문맥.jsonl 로 합쳐지고 `ops 토큰` 이 파일별로 보인다."""
+    ti = p.get("tool_input") or {}
+    경로 = str(ti.get("file_path") or "")
+    if not 경로:
+        return
+    q = Path(경로)
+    if not q.is_absolute():
+        q = Path(p.get("cwd") or os.getcwd()) / q
+    try:
+        r = str(q.resolve().relative_to(뿌리.resolve()))
+    except ValueError:
+        return
+    if not q.is_file():
+        return
+    limit = ti.get("limit")
+    if limit:
+        줄들 = q.read_bytes().split(b"\n")
+        s = max(int(ti.get("offset") or 1) - 1, 0)
+        n, 어떻게 = len(b"\n".join(줄들[s:s + int(limit)])), "일부"
+    else:
+        n, 어떻게 = q.stat().st_size, "통째로"
+    from 공통 import 기록추가, 지금시각
+    기록추가(뿌리, "문맥", {"때": 지금시각(), "자리": "읽기", "어떻게": 어떻게, "파일": r, "바이트": n})
+
+
 def 도구직후(뿌리: Path, c: dict, p: dict) -> int:
     이름 = p.get("tool_name") or ""
+    if 이름 == "Read":
+        읽기기록(뿌리, p)
+        return 0
     if 이름 not in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
         return 0
     if 이름 == "Bash" and not re.search(r"\b(git|ops|sed -i|>|mv|rm|cp)\b", str((p.get("tool_input") or {}).get("command") or "")):

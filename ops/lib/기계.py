@@ -92,13 +92,21 @@ def 목차크기(뿌리: Path, c: dict, 글: str | None = None) -> list[str]:
     return 문제
 
 
-def 파일크기(뿌리: Path, c: dict) -> list[str]:
-    최대 = int(c["파일최대바이트"])
+def 목차행(뿌리: Path, c: dict) -> list[str]:
+    """주제 파일마다 .ops.yml 의 목차에 행이 하나 있다. 2026-09-14~17 에 있던 「파일크기」(30KB 를 넘으면 절로 나눈다) 대신 건다 —
+    파일을 나누는 기준은 크기가 아니라 목차 행이고, 행 없는 파일은 목차로 못 찾아 읽히지 않는다 (설계 3절)."""
+    목차파일 = {str(항.get("파일", "")) for 항 in (c.get("목차") or [])}
+    결정로그 = str(c.get("결정로그") or "")
     문제 = []
     for p in 주제파일들(뿌리, c):
-        n = p.stat().st_size
-        if n > 최대:
-            문제.append(f"{rel(뿌리, p)} 가 {n} 바이트다. {최대} 바이트 안으로 줄인다. 절을 나눠 다른 파일로 옮기고 목차에 그 파일을 한 줄 더한다")
+        r = rel(뿌리, p)
+        if r == 결정로그 or r in 목차파일:
+            continue
+        문제.append(f"{r} 는 주제 파일인데 .ops.yml 의 목차에 행이 없다. 목차에 「- 말: <사용자가 이 파일의 내용을 물을 때 쓸 낱말들> / 파일: {r}」 항목을 더하고 "
+                  f"`ops build` 를 돌린 뒤 다시 커밋한다. 파일을 지우거나 다른 파일에 합치는 것으로 넘기지 않는다")
+    for r in sorted(목차파일):
+        if r and not (뿌리 / r).is_file():
+            문제.append(f".ops.yml 의 목차가 가리키는 {r} 가 없다. 파일을 옮겼으면 목차의 파일 칸을 새 경로로 고치고, 없앴으면 그 항목을 지운 뒤 `ops build` 를 돌린다")
     return 문제
 
 
@@ -176,7 +184,7 @@ def 지금검사(뿌리: Path, c: dict | None = None) -> list[str]:
             문제.append(f"{r} {x}")
     문제 += 목차크기(뿌리, c)
     문제 += 지금.검사(뿌리, c)
-    문제 += 파일크기(뿌리, c)
+    문제 += 목차행(뿌리, c)
     문제 += 생성.다른것(뿌리, c)
     return 문제
 
@@ -200,7 +208,7 @@ def 커밋검사(뿌리: Path, c: dict | None = None) -> list[str]:
     if "CLAUDE.md" in 스테이지된:
         문제 += 목차크기(뿌리, c, git(뿌리, "show", ":CLAUDE.md"))
     문제 += 지금.검사(뿌리, c)
-    문제 += 파일크기(뿌리, c)
+    문제 += 목차행(뿌리, c)
     문제 += 작업로그(뿌리)
     for x in 생성.다른것(뿌리, c):
         문제.append(x)

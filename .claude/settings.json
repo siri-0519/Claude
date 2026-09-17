@@ -16,7 +16,7 @@
           "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook.py pre_tool_use" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+      { "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read",
         "hooks": [ { "type": "command", "timeout": 30,
           "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook.py post_tool_use" } ] }
     ],

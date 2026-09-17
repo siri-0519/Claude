@@ -36,6 +36,7 @@ def 임시레포() -> Path:
         shutil.copytree(틀 / 것, d / 것, ignore=shutil.ignore_patterns("__pycache__"))
     (d / ".ops.yml").write_text(
         "이름: 시험\n소개: 시험 레포다.\n주제파일: ['*.md']\n결정로그: decisions.md\n"
+        "제외: [README.md, STATUS.md, CLAUDE.md, worklog.md, guide.md, 'memory/**', 'ops/**', '.claude/**']\n"   # guide.md 는 안내(파생물)지 주제 파일이 아니다
         "목차:\n  - 말: 몸\n    파일: body.md\n판정:\n  끄기: true\n", encoding="utf-8")
     (d / ".gitignore").write_text("worklog.md\n.meta/\n__pycache__/\n", encoding="utf-8")
     (d / "CLAUDE.md").write_text("# 목차\n\n<!-- BEGIN GENERATED: 목차 -->\n<!-- END GENERATED: 목차 -->\n", encoding="utf-8")
@@ -170,6 +171,26 @@ def main() -> int:
     확인(any(d.get("자리") == "user_prompt_submit" for d in 문맥) and all(int(d.get("바이트", 0)) > 0 for d in 문맥), "훅이 넣은 글의 크기가 기록된다")
     code, out = ops(r, "토큰")
     확인(code == 0 and "user_prompt_submit" in out, "ops 토큰 이 날 · 자리별 크기를 보인다")
+
+    print("커밋 직전 · 목차 행 · 읽기 기록")
+    (r / "hair.md").write_text("# 머리\n\n## 지금\n\n- 숱이 적다 [확인 2026-09-01].\n", encoding="utf-8")
+    git(r, "add", "hair.md")
+    문제 = 기계.커밋검사(r, c)
+    확인(any("hair.md 는 주제 파일인데" in x and "목차에 행이 없다" in x for x in 문제), "목차에 행이 없는 주제 파일을 커밋 직전에 잡는다")
+    (r / "body.md").write_text((r / "body.md").read_text(encoding="utf-8") + "- " + "긴 줄이다 [확인 2026-09-01]. " * 1500 + "\n", encoding="utf-8")
+    git(r, "add", "body.md")
+    문제 = 기계.커밋검사(r, c)
+    확인((r / "body.md").stat().st_size > 30000 and not any("바이트" in x and "줄인다" in x for x in 문제),
+         "주제 파일이 30KB 를 넘어도 막지 않는다 — 나누는 기준은 크기가 아니라 목차 행이다")
+    git(r, "checkout", "-q", "--", "body.md"); (r / "hair.md").unlink(); git(r, "reset", "-q")
+    훅돌리기(r, "post_tool_use", {"cwd": str(r), "tool_name": "Read", "tool_input": {"file_path": str(r / "body.md")}})
+    확인(any(d.get("자리") == "읽기" and d.get("파일") == "body.md" and d.get("어떻게") == "통째로" and int(d.get("바이트", 0)) == (r / "body.md").stat().st_size
+             for d in 공통.기록읽기(r, "문맥")), "Read 한 파일과 바이트가 기록된다")
+    훅돌리기(r, "post_tool_use", {"cwd": str(r), "tool_name": "Read", "tool_input": {"file_path": str(r / "body.md"), "offset": 1, "limit": 2}})
+    확인(any(d.get("자리") == "읽기" and d.get("어떻게") == "일부" and 0 < int(d.get("바이트", 0)) < (r / "body.md").stat().st_size for d in 공통.기록읽기(r, "문맥")),
+         "일부만 읽으면 그 줄들의 바이트가 기록된다")
+    code, out = ops(r, "토큰")
+    확인(code == 0 and "읽은 파일" in out and "body.md" in out, "ops 토큰 이 읽은 파일을 보인다")
 
     print("커밋 직전 · 대장")
     확인(기계.대장검사(r) == [], "기계 규칙 대장에 네 칸이 다 있다")
