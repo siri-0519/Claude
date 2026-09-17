@@ -212,6 +212,48 @@ def 상대날짜_새줄(글: str, c: dict, 옛글: str = "") -> list[str]:
     return 문제
 
 
+def 안쓰는말(글: str, c: dict) -> list[str]:
+    """답이나 문서에 사용자가 쓰지 말라고 한 말(.ops.yml 의 안쓰는말)이 있나. 따옴표 · 「」 · 코드 안은 옮긴 말이라 보지 않는다.
+    항마다 「<걸린 꼴>(<말>) → <대신 쓸 말>」 한 줄. 사용자가 2026-09-14 와 2026-09-17 에 같은 말을 두 번 짚어서 기계가 막는다."""
+    본문 = 따옴표안.sub("", 제목괄호.sub("", 글))
+    본문 = re.sub(r"```.*?```", "", 본문, flags=re.S)
+    본문 = re.sub(r"`[^`]*`", "", 본문)
+    나온것 = []
+    for 항 in c.get("안쓰는말") or []:
+        if not isinstance(항, dict):
+            항 = {"말": str(항)}
+        찾기 = str(항.get("찾기") or "") or ((r"(?<![가-힣])" + re.escape(str(항.get("말") or ""))) if 항.get("말") else "")
+        if not 찾기:
+            continue
+        m = re.search(찾기, 본문)
+        if m:
+            나온것.append(f"「{m.group(0)}」({항.get('말')}) → {항.get('대신') or '그것이 무엇인지를 풀어 적는다'}")
+    return 나온것
+
+
+def 안쓰는말_새줄(글: str, c: dict, 옛글: str = "") -> list[str]:
+    """새 줄(옛글에 없는 줄)에서만 안 쓰는 말을 찾는다. 코드 울타리 안은 보지 않는다."""
+    옛 = set(x.strip() for x in 옛글.split("\n"))
+    문제 = []
+    울타리 = False
+    for i, ln in enumerate(글.split("\n"), 1):
+        if ln.startswith("```"):
+            울타리 = not 울타리
+            continue
+        if 울타리 or ln.strip() in 옛:
+            continue
+        걸린 = 안쓰는말(ln, c)
+        if 걸린:
+            문제.append(f"{i}줄: 쓰지 않기로 한 말 {' / '.join(걸린)} — 화살표 뒤의 말 가운데 뜻에 맞는 것으로 적는다: {ln.strip()[:50]}")
+    return 문제
+
+
+def 안쓰는말파일인가(r: str, c: dict) -> bool:
+    """안 쓰는 말을 새 줄에서 보는 파일 — 규칙 · 훅 글 · 목차 · 설명서 · 주제 파일 등 .md 와 .yml 전부. 기록(memory/)과 일지, 그 말의 목록 자체가 든 설정 파일은 뺀다."""
+    from 공통 import 설정파일
+    return (r.endswith(".md") or r.endswith(".yml")) and r != 설정파일 and not r.startswith("memory/") and r != "worklog.md" and not r.startswith(".git/")
+
+
 def 목차크기(뿌리: Path, c: dict, 글: str | None = None) -> list[str]:
     p = 뿌리 / "CLAUDE.md"
     if 글 is None:
@@ -327,6 +369,11 @@ def 지금검사(뿌리: Path, c: dict | None = None) -> list[str]:
         r = rel(뿌리, p)
         for x in 상대날짜_새줄(p.read_text(encoding="utf-8"), c, 옛):
             문제.append(f"{r} {x}")
+    for r in git(뿌리, "ls-files", "-co", "--exclude-standard").split("\n"):
+        if r and 안쓰는말파일인가(r, c) and (뿌리 / r).is_file():
+            옛파일 = git(뿌리, "show", f"HEAD:{r}")
+            for x in 안쓰는말_새줄((뿌리 / r).read_text(encoding="utf-8", errors="ignore"), c, 옛파일):
+                문제.append(f"{r} {x}")
     문제 += 목차크기(뿌리, c)
     문제 += 지금.검사(뿌리, c)
     문제 += 목차행(뿌리, c)
@@ -345,6 +392,9 @@ def 커밋검사(뿌리: Path, c: dict | None = None) -> list[str]:
     주제 = {rel(뿌리, p) for p in 주제파일들(뿌리, c)}
     옛 = "\n".join(옛줄전부(뿌리, c))
     for r in 스테이지된:
+        if 안쓰는말파일인가(r, c):
+            for x in 안쓰는말_새줄(git(뿌리, "show", f":{r}"), c, git(뿌리, "show", f"HEAD:{r}")):
+                문제.append(f"{r} {x}")
         if r not in 주제:
             continue
         새 = git(뿌리, "show", f":{r}")

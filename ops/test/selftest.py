@@ -87,9 +87,13 @@ def main() -> int:
     확인(표시.검사_글("- 새 주장이 하나 들어간다\n", c) != [], "표시 없는 주장 줄을 잡는다")
     확인(표시.검사_글("- 새 주장이 하나 들어간다 [제안]\n", c) == [], "[제안] 이 붙은 줄은 통과한다")
     확인(표시.검사_글("- `ops build`\n", c) == [], "코드만 있는 줄은 주장이 아니다")
-    확인(기계.상대날짜("어제 잰 값이다", c) == ["어제"], "답의 상대 날짜를 잡는다")
+    확인(기계.상대날짜("어제 본 값이다", c) == ["어제"], "답의 상대 날짜를 잡는다")
     확인(기계.상대날짜("「어제보다 오늘 더」 를 불렀다", c) == [], "「」 안의 제목은 보지 않는다")
     확인(기계.상대날짜_새줄("- 아까 먹었다 [확인]\n", c) != [], "문서 새 줄의 상대 날짜를 잡는다")
+    확인(기계.안쓰는말_새줄("- 몸무게를 재는 법 [확인]\n", c) != [] and 기계.안쓰는말("기록에서 잰 값이다", c) != [] and "센다" in 기계.안쓰는말("기록에서 잰 값이다", c)[0],
+         "문서 새 줄의 안 쓰는 말을 잡는다")
+    확인(기계.안쓰는말('사용자가 "잰다" 라고 했다. 「재는 법」 절. `재기(뿌리)`', c) == [] and 기계.안쓰는말("현재는 괜찮다. 재검사했고 재기록이다. 존재는 한다", c) == [],
+         "따옴표 안에 옮긴 안 쓰는 말은 걸지 않는다")
 
     print("셸 검사")
     강제 = "git push " + "--force origin main"
@@ -113,6 +117,8 @@ def main() -> int:
     확인(code == 2 and "표시가 없다" in err and "어제" in err, "주제 파일 새 줄의 상대 날짜와 표시 없음을 막는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md"), "old_string": "## 운동\n", "new_string": "## 운동\n\n- 계단을 올랐다 [확인 2026-09-02]\n"}, "cwd": str(r)})
     확인(code == 0 and "고칠 때" in out, "표시 있는 줄은 통과하고 「고칠 때」 규칙을 한 번 넣는다")
+    code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "ops/rules/판단.md"), "old_string": "# 판단 규칙\n", "new_string": "# 판단 규칙\n\n크기를 재는 규칙이다.\n"}, "cwd": str(r)})
+    확인(code == 2 and "쓰지 말라고 한 말" in err and "센다" in err, "규칙 파일의 새 줄에 든 안 쓰는 말을 저장 직전에 막는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Edit", "tool_input": {"file_path": str(r / "body.md"), "old_string": "## 운동\n", "new_string": "## 운동\n\n- 계단을 올랐다 [확인 2026-09-02]\n"}, "cwd": str(r)})
     확인(code == 0 and "고칠 때" not in out, "두 번째에는 규칙을 다시 넣지 않는다")
     code, out, err = 훅돌리기(r, "pre_tool_use", {"tool_name": "Bash", "tool_input": {"command": 강제}, "cwd": str(r)})
@@ -302,9 +308,15 @@ def main() -> int:
     확인(any("원격에 없다" in x for x in 문제), "원격에 없는 브랜치를 짚는다")
     tr = r / "t.jsonl"
     tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
-                  json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "어제 잰 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
+                  json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "어제 본 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
     확인(code == 2 and "상대 날짜" in err, "답 끝에 상대 날짜를 되돌린다")
+    tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
+                  json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "2026-09-01 에 잰 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
+    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
+    확인(code == 2 and "쓰지 말라고 한 말" in err and "센다" in err and "무엇을 왜 고쳤다" in err, "답 끝에 안 쓰는 말을 되돌린다")
+    tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
+                  json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "어제 본 값으로는 괜찮다."}]}}) + "\n", encoding="utf-8")
     깨진 = r / "ops/lib/대화.py"; 원래 = 깨진.read_text(encoding="utf-8")
     깨진.write_text("raise RuntimeError('시험용 오류')\n" + 원래, encoding="utf-8")
     code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
