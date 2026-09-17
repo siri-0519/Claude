@@ -158,8 +158,8 @@ def S7검사(d, bare, 답):
             "push 됐다": push됐나(d, bare)}
 
 def S8검사(d, bare, 답):
-    횟수 = (d / "memory/횟수.jsonl")
-    return {"답에 근거(파일 · 절 · 표시)가 붙었다": any(k in 답 for k in ("body.md", "「", "[확인", "확인 2026")),
+    전부 = 답전부(d) or 답      # 마지막 답은 push 보고일 때가 많다 — 근거는 앞의 답에 있다 (2026-09-17)
+    return {"답에 근거(파일 · 절 · 표시)가 붙었다": any(k in 전부 for k in ("body.md", "「", "[확인", "확인 2026")),
             "답에 상대 날짜가 없다": 상대날짜없나(답), "판정이 돌았다": 판정돌았나(d),
             "push 됐다": push됐나(d, bare)}
 
