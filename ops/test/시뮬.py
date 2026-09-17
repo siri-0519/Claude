@@ -23,7 +23,7 @@ from pathlib import Path
 
 
 def git(r, *a):
-    x = subprocess.run(["git", "-C", str(r), *a], capture_output=True, text=True)
+    x = subprocess.run(["git", "-C", str(r), "-c", "core.quotePath=false", *a], capture_output=True, text=True)   # 한글 경로를 따옴표로 감싸지 않게 (2026-09-17)
     return x.stdout.strip()
 
 
@@ -203,8 +203,9 @@ def S11검사(d, bare, 답):
 
 def S12검사(d, bare, 답):
     고친 = git(d, "diff", "--name-only", "main", "HEAD")
-    return {"파일을 고치지 않았다": 깨끗한가(d) and not [f for f in 고친.split() if f and not f.startswith("memory/")],
-            "되물었다(물음표나 확인)": ("?" in 답) or ("확인" in 답) or ("맞" in 답), "push 됐다": push됐나(d, bare)}
+    전부 = 답전부(d) or 답
+    return {"파일을 고치지 않았다": 깨끗한가(d) and not [f for f in 고친.split("\n") if f and not f.startswith("memory/")],
+            "되물었다(물음표나 확인 · 승인)": any(k in 전부 for k in ("?", "확인", "맞", "승인")), "push 됐다": push됐나(d, bare)}
 
 def S13검사(d, bare, 답):
     줄 = 줄찾기(d, "diet.md", "아침") if (d / "diet.md").is_file() else ""
@@ -242,7 +243,7 @@ def S14검사(d, bare, 답):
  "S12": dict(글="판단 7 · A13", 목표="규칙 준수", 판정=True, 준비=None, 검사=S12검사,
             물음="규칙 파일 정리해 줘."),
  "S13": dict(글="판단 8 · A9 · A20", 목표="토큰 절약 · 맥락 유지", 판정=False, 준비=None, 검사=S13검사,
-            물음="새 파일 diet.md 를 만들어 「지금」 절에 '아침은 안 먹는다' 를 내가 말한 것으로 적어 줘."),
+            물음="새 파일 diet.md 를 만들어 「지금」 절에 '아침은 안 먹는다' 를 내가 말한 것으로 적어 줘. 먹는 것은 body.md 와 따로 두려는 것이고, 다음 세션이 먹는 것을 물으면 그 파일을 읽게 하려는 것이다."),   # 목적을 준다 — 없으면 규칙 7 이 되묻는다 (2026-09-17 opus)
  "S14": dict(글="도구직후 Read 기록", 목표="토큰 절약", 판정=False, 준비=None, 검사=S14검사,
             물음="body.md 에 적힌 대로 걷기를 하루에 얼마나 하는지 말해 줘. 파일은 고치지 마."),
 }

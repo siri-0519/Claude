@@ -245,6 +245,13 @@ def 목차행(뿌리: Path, c: dict) -> list[str]:
     for r in sorted(목차파일):
         if r and not (뿌리 / r).is_file():
             문제.append(f".ops.yml 의 목차가 가리키는 {r} 가 없다. 파일을 옮겼으면 목차의 파일 칸을 새 경로로 고치고, 없앴으면 그 항목을 지운 뒤 `ops build` 를 돌린다")
+    # ops/rules/ 는 규칙 파일 자리다. 주제 파일이 거기 생기면 제외 목록(ops/**) 때문에 목차 검사도 못 보고 목차로도 못 찾는다 —
+    # 2026-09-17 시뮬 S13 에서 haiku 가 diet.md 를 ops/rules/ 에 만들었다.
+    규칙파일 = {"판단.md", "훅-글.md", Path(str(c.get("판단규칙") or "ops/rules/판단.md")).name}
+    for p in sorted((뿌리 / "ops" / "rules").glob("*.md")) if (뿌리 / "ops" / "rules").is_dir() else []:
+        if p.name not in 규칙파일:
+            문제.append(f"ops/rules/{p.name} 는 규칙 파일이 아니라 주제 파일이다. ops/rules/ 는 규칙 파일(판단.md · 훅-글.md) 자리라, 이 파일을 레포 맨 위({p.name})로 옮기고 "
+                      f".ops.yml 의 목차에 행을 더한 뒤 `ops build` 를 돌리고 다시 커밋한다")
     return 문제
 
 
