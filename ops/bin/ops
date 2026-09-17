@@ -215,14 +215,101 @@ def cmd_판정(a) -> int:
 
 
 def cmd_rules(a) -> int:
+    """규칙 대장 — 목적 다섯마다 무엇이 지키나, 그리고 목적이나 시험이 빠진 것. 규칙은 전부 목적 다섯에서 파생된다 (설계 1절)."""
     import 기계
     r = 뿌리()
-    print("기계 규칙 (ops/rules/기계.yml)\n")
-    print(기계.보이기(r))
-    문제 = 기계.대장검사(r)
-    if 문제:
-        print("\n대장에 빠진 것:\n" + "\n".join("- " + x for x in 문제))
-    print("\n판단 규칙은 ops/rules/판단.md 에 있다. 「고칠 때」는 Edit · Write 직전에, 「답할 때」는 답 끝의 판정에 들어간다.")
+    if a.목적별:
+        print("목적마다 그것을 지키는 규칙 (기계 규칙 ops/rules/기계.yml · 판단 규칙 ops/rules/판단.md · 훅 글 ops/rules/훅-글.md)\n")
+        print("| 목적 | 기계 규칙 | 판단 규칙 | 훅 글 |\n|---|---|---|---|")
+        for 목적, 항 in 기계.목적별(r).items():
+            print(f"| {목적} | {' · '.join(항['기계']) or '없음'} | {' · '.join(항['판단']) or '없음'} | {' · '.join(항['훅글']) or '없음'} |")
+    else:
+        print("기계 규칙 (ops/rules/기계.yml)\n")
+        print(기계.보이기(r))
+        print("\n판단 규칙은 ops/rules/판단.md 에 있다. 「고칠 때」는 Edit · Write 직전에, 「답할 때」는 답 끝의 판정에 들어간다. "
+              "규칙마다의 목적과 시험은 그 파일 끝의 표에 있다. 목적별로 보려면 `ops rules --목적별`.")
+    문제 = 기계.규칙대장(r)
+    print("\n대장에 빠진 것:\n" + "\n".join("- " + x for x in 문제) if 문제 else "\n대장에 빠진 것이 없다 — 규칙마다 목적과 시험이 있다.")
+    return 1 if 문제 else 0
+
+
+def cmd_목표(a) -> int:
+    """목적 다섯을 기록에서 잰다 — 이번 주와 지난 주. 경보는 아래에 (2026-09-17)."""
+    import 기계
+    from collections import Counter, defaultdict
+    from datetime import date, timedelta
+    r = 뿌리(); c = 공통.설정(r)
+    오늘 = date.fromisoformat(공통.오늘())
+    이번주 = 오늘.isocalendar()[:2]; 지난주 = (오늘 - timedelta(days=7)).isocalendar()[:2]
+    def 주(날):
+        try:
+            return date.fromisoformat(str(날)[:10]).isocalendar()[:2]
+        except ValueError:
+            return None
+    횟수 = 공통.기록읽기(r, "횟수"); 판정들 = 공통.기록읽기(r, "판정"); 문맥 = 공통.기록읽기(r, "문맥")
+    def 세기(줄들, 날열쇠, 조건):
+        n = Counter()
+        for d in 줄들:
+            w = 주(d.get(날열쇠))
+            if w and 조건(d):
+                n[w] += 1
+        return n[이번주], n[지난주]
+    def 합(줄들, 날열쇠, 조건, 값열쇠="바이트"):
+        n = Counter()
+        for d in 줄들:
+            w = 주(d.get(날열쇠))
+            if w and 조건(d):
+                n[w] += int(d.get(값열쇠) or 0)
+        return n[이번주], n[지난주]
+    import 판정
+    def 규칙번호(d):
+        return 판정.이름맞추기(r, str(d.get("규칙", "")))
+    줄 = []
+    def 행(목적, 재는것, 이번, 지난):
+        줄.append(f"| {목적} | {재는것} | {이번} | {지난} |")
+    판정번, 판정지난 = 세기(판정들, "때", lambda d: d.get("자리") == "답")
+    걸린번, 걸린지난 = 세기(판정들, "때", lambda d: d.get("자리") == "답" and int(d.get("어긴") or 0) > 0)
+    행("규칙 준수", "답 끝 판정을 시킨 번 가운데 걸린 번", f"{걸린번}/{판정번}", f"{걸린지난}/{판정지난}")
+    행("규칙 준수", "판정 모델이 건 횟수(전체)", *세기(횟수, "날", lambda d: d.get("누가") == "판정"))
+    행("규칙 준수", "기계가 막은 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "기계"))
+    행("규칙 준수", "본인이 고치라고 한 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "본인"))
+    행("맥락 유지", "본인이 「바뀌었다 · 맥락」으로 고치라고 한 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "본인" and "맥락" in str(d.get("규칙", ""))))
+    시작 = [d for d in 문맥 if d.get("자리") == "session_start"]
+    행("맥락 유지 · 토큰 절약", "세션 시작에 들어간 글의 바이트 합 / 번", "{}/{}".format(*[x[0] for x in (합(시작, "때", lambda d: True), 세기(시작, "때", lambda d: True))]),
+       "{}/{}".format(*[x[1] for x in (합(시작, "때", lambda d: True), 세기(시작, "때", lambda d: True))]))
+    행("토큰 절약", "훅이 막으며 보낸 글의 바이트 합", *합(문맥, "때", lambda d: d.get("어떻게") == "막기"))
+    행("토큰 절약", "Read 한 파일의 바이트 합", *합(문맥, "때", lambda d: d.get("자리") == "읽기"))
+    import 훅
+    n, _ = 훅.어긋남개수(r, c, 다시=False)
+    행("정보 추적성", "어긋남 목록의 항 수(지금)", n, "-")
+    행("정보 추적성", "기계가 표시 없는 줄을 막은 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "기계" and str(d.get("규칙")) == "표시"))
+    행("정보 추적성", "본인이 「어긋남」으로 찾아낸 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "본인" and "어긋남" in str(d.get("규칙", ""))))
+    행("좋은 설명", "판정이 규칙 4 · 5 · 6 · 9 로 건 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "판정" and 규칙번호(d) in ("4", "5", "6", "9")))
+    행("좋은 설명", "기계가 상대 날짜로 막은 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "기계" and str(d.get("규칙")) == "상대날짜"))
+    행("좋은 설명", "본인이 「설명」으로 고치라고 한 횟수", *세기(횟수, "날", lambda d: d.get("누가") == "본인" and "설명" in str(d.get("규칙", ""))))
+    print("목적 다섯을 기록에서 잰 것 (memory/횟수.jsonl · 판정.jsonl · 문맥.jsonl · 어긋남 목록). 재는 법은 설계 1절.\n")
+    print("| 목적 | 재는 것 | 이번 주 | 지난 주 |\n|---|---|---|---|")
+    print("\n".join(줄))
+    경보 = []
+    초들 = [float(d["초"]) for d in 판정들 if d.get("초") and 주(d.get("때")) == 이번주]
+    if 초들 and max(초들) > int(c["판정"]["시간"]) * 0.8:
+        경보.append(f"판정 시간이 제한({c['판정']['시간']}초)의 8할을 넘은 적이 있다 — 이번 주 최대 {max(초들):.0f}초, 평균 {sum(초들)/len(초들):.0f}초. 넘으면 답 끝 검사가 통째로 건너뛰어진다")
+    if 판정번 and 걸린번 / 판정번 >= 0.7:
+        경보.append(f"답 끝 판정을 시킨 {판정번}번 가운데 {걸린번}번이 걸렸다 — 규칙이 안 지켜지거나 판정이 지나치다. `ops 횟수` 로 규칙별로 본다")
+    by = defaultdict(Counter)
+    for d in 횟수:
+        w = 주(d.get("날"))
+        if w in (이번주, 지난주):
+            by[str(d.get("규칙"))][w] += 1
+    for 규칙, cc in by.items():
+        if cc[이번주] >= 5 and cc[이번주] >= 2 * max(cc[지난주], 1) and cc[지난주]:
+            경보.append(f"규칙 「{규칙}」 이 이번 주 {cc[이번주]}번으로 지난 주({cc[지난주]}번)의 두 배를 넘었다")
+    빠진 = 기계.규칙대장(r)
+    if 빠진:
+        경보.append(f"목적이나 시험이 빠진 규칙이 {len(빠진)}개다 — `ops rules` 로 본다")
+    if n:
+        경보.append(f"어긋남 목록에 {n}개가 있다 — `ops 어긋남`")
+    print("\n경보:\n" + "\n".join("- " + x for x in 경보) if 경보 else "\n경보 없음")
     return 0
 
 
@@ -303,7 +390,8 @@ def main(argv: list[str]) -> int:
     x = sp.add_parser("토큰"); x.set_defaults(f=cmd_토큰)
     x = sp.add_parser("횟수"); x.add_argument("--본인", default=None); x.add_argument("--어디", default=""); x.add_argument("--합치기", action="store_true"); x.set_defaults(f=cmd_횟수)
     x = sp.add_parser("판정"); x.add_argument("--문서", action="store_true"); x.add_argument("--글", default=None); x.set_defaults(f=cmd_판정)
-    x = sp.add_parser("rules"); x.set_defaults(f=cmd_rules)
+    x = sp.add_parser("rules"); x.add_argument("--목적별", action="store_true"); x.set_defaults(f=cmd_rules)
+    x = sp.add_parser("목표"); x.set_defaults(f=cmd_목표)
     x = sp.add_parser("worklog"); x.set_defaults(f=cmd_worklog)
     x = sp.add_parser("hook"); x.add_argument("자리", choices=["session_start", "user_prompt_submit", "pre_tool_use", "post_tool_use", "stop"]); x.set_defaults(f=cmd_hook)
     x = sp.add_parser("hooks"); x.add_argument("--설치", action="store_true"); x.add_argument("--push", action="store_true")

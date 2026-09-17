@@ -16,7 +16,9 @@ from 공통 import 설정, git, rel, 주제파일들, 절나누기, 옛줄전부
 대장파일 = "ops/rules/기계.yml"
 제목괄호 = re.compile(r"「.*?」")
 따옴표안 = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”")   # 사용자나 문서의 말을 그대로 옮긴 자리 — 상대 날짜로 걸지 않는다 (2026-09-17)
-자리들 = ("저장직전", "명령직전", "도구직후", "답끝", "커밋직전", "push직전", "세션시작")
+자리들 = ("저장직전", "명령직전", "도구직후", "답끝", "커밋직전", "push직전", "세션시작", "원격")
+목적들 = ("규칙 준수", "맥락 유지", "토큰 절약", "정보 추적성", "좋은 설명")   # 설계 1절 — 규칙은 전부 이 다섯에서 파생된다 (2026-09-17)
+시험종류 = ("selftest", "시뮬", "읽힘", "워크플로")
 
 
 def 대장(뿌리: Path) -> list[dict]:
@@ -26,27 +28,162 @@ def 대장(뿌리: Path) -> list[dict]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or []
 
 
+def 시험참조검사(뿌리: Path, 참조: str) -> str:
+    """시험 칸의 한 항이 실재하는가. "selftest: <시험 이름>" 은 ops/test/selftest.py 에 그 이름이 있어야 하고, "시뮬: S<n>" 은
+    ops/test/시뮬.py 의 시나리오여야 하고, "워크플로: <파일>" 은 .github/workflows 에 있어야 한다. "읽힘: <기록>" 은 글이 있으면 된다.
+    문제가 없으면 빈 문자열."""
+    m = re.match(r"^\s*(selftest|시뮬|읽힘|워크플로)\s*:\s*(.+?)\s*$", str(참조))
+    if not m:
+        return f"시험 「{참조}」 는 「<종류>: <무엇>」 꼴이 아니다 (종류는 {' · '.join(시험종류)})"
+    종류, 무엇 = m.group(1), m.group(2)
+    if 종류 == "selftest":
+        p = 뿌리 / "ops/test/selftest.py"
+        if not (p.is_file() and 무엇 in p.read_text(encoding="utf-8")):
+            return f"시험 「{참조}」: ops/test/selftest.py 에 그 이름의 시험이 없다"
+    elif 종류 == "시뮬":
+        p = 뿌리 / "ops/test/시뮬.py"
+        if not (p.is_file() and re.search(r'"' + re.escape(무엇) + r'":\s*dict\(', p.read_text(encoding="utf-8"))):
+            return f"시험 「{참조}」: ops/test/시뮬.py 에 그 시나리오가 없다"
+    elif 종류 == "워크플로":
+        if not (뿌리 / ".github/workflows" / 무엇).is_file():
+            return f"시험 「{참조}」: .github/workflows/{무엇} 이 없다"
+    return ""
+
+
+def 목적검사(자리이름: str, 목적: object) -> list[str]:
+    if not 목적 or not isinstance(목적, list):
+        return [f"{자리이름}: 목적 칸이 없다 — 목적 다섯({' · '.join(목적들)}) 가운데 하나 이상을 적는다. 어디에도 안 닿는 규칙은 뺀다"]
+    return [f"{자리이름}: 목적 「{x}」 는 다섯에 없다 ({' · '.join(목적들)})" for x in 목적 if x not in 목적들]
+
+
 def 대장검사(뿌리: Path) -> list[str]:
-    """규칙마다 네 칸이 다 있나. 없으면 커밋을 막는다."""
+    """규칙마다 여섯 칸(이름 · 문장 · 자리 · 검사 · 목적 · 시험)이 다 있고, 목적은 다섯 가운데 것이고, 시험은 실재하나. 없으면 커밋을 막는다."""
     문제 = []
     이름들: set[str] = set()
     for i, r in enumerate(대장(뿌리), 1):
-        for k in ("이름", "문장", "자리", "검사"):
+        for k in ("이름", "문장", "자리", "검사", "목적", "시험"):
             if not r.get(k):
-                문제.append(f"{대장파일} {i}번째 규칙에 {k} 칸이 없다")
+                문제.append(f"{대장파일} {r.get('이름') or f'{i}번째 규칙'}: {k} 칸이 없다")
         for a in r.get("자리") or []:
             if a not in 자리들:
                 문제.append(f"{대장파일} {r.get('이름', i)}: 자리 {a} 는 없는 자리다 ({' · '.join(자리들)})")
+        if r.get("목적"):
+            문제 += 목적검사(f"{대장파일} {r.get('이름', i)}", r.get("목적"))
+        for 참조 in (r.get("시험") or []) if isinstance(r.get("시험"), list) else ([r["시험"]] if r.get("시험") else []):
+            x = 시험참조검사(뿌리, 참조)
+            if x:
+                문제.append(f"{대장파일} {r.get('이름', i)}: {x}")
         if r.get("이름") in 이름들:
             문제.append(f"{대장파일}: 이름 {r['이름']} 이 겹친다")
         이름들.add(r.get("이름"))
     return 문제
 
 
-def 보이기(뿌리: Path) -> str:
-    줄 = ["| 이름 | 규칙 | 자리 | 검사 |", "|---|---|---|---|"]
+판단표절 = "규칙마다 목적과 시험"
+
+
+def 판단대장(뿌리: Path) -> dict[str, dict]:
+    """ops/rules/판단.md 끝의 「규칙마다 목적과 시험」 표 — 번호 → {목적: [...], 시험: [...]}. 판정 모델에는 넘기지 않는 절이다."""
+    from 판정 import 규칙파일자리
+    p = 규칙파일자리(뿌리)
+    if not p.is_file():
+        return {}
+    글 = p.read_text(encoding="utf-8")
+    줄 = 글.split("\n")
+    나온것: dict[str, dict] = {}
+    for 수준, 제목, s, e in 절나누기(글):
+        if 판단표절 in 제목:
+            for ln in 줄[s:e]:
+                m = re.match(r"^\|\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*$", ln)
+                if m:
+                    나온것[m.group(1)] = {"목적": [x.strip() for x in m.group(2).split("·") if x.strip()],
+                                        "시험": [x.strip() for x in m.group(3).split(" · ") if x.strip()]}
+    return 나온것
+
+
+def 판단대장검사(뿌리: Path) -> list[str]:
+    """판단 규칙마다 표에 행이 있고, 목적은 다섯 가운데 것이고, 시험은 실재하나."""
+    from 판정 import 규칙전문들, 규칙파일자리
+    문제 = []
+    표 = 판단대장(뿌리)
+    파일 = rel(뿌리, 규칙파일자리(뿌리))
+    for 번호 in 규칙전문들(뿌리):
+        if 번호 not in 표:
+            문제.append(f"{파일}: 규칙 {번호} 이 「{판단표절}」 표에 없다 — 「| {번호} | <목적> | <시험> |」 행을 더한다")
+            continue
+        문제 += 목적검사(f"{파일} 규칙 {번호}", 표[번호]["목적"])
+        if not 표[번호]["시험"]:
+            문제.append(f"{파일} 규칙 {번호}: 시험 칸이 비었다")
+        for 참조 in 표[번호]["시험"]:
+            x = 시험참조검사(뿌리, 참조)
+            if x:
+                문제.append(f"{파일} 규칙 {번호}: {x}")
+    return 문제
+
+
+훅글파일 = "ops/rules/훅-글.md"
+
+
+def 훅글항들(뿌리: Path) -> list[dict]:
+    """훅-글.md 의 이 레포 항(### A<n>) — {번호, 제목, 목적, 판정}."""
+    p = 뿌리 / 훅글파일
+    if not p.is_file():
+        return []
+    나온것: list[dict] = []
+    for 덩이 in re.split(r"^(?=### A\d+)", p.read_text(encoding="utf-8"), flags=re.M):
+        m = re.match(r"^### (A\d+)\s*·\s*(.*)$", 덩이, re.M)
+        if not m:
+            continue
+        항 = {"번호": m.group(1), "제목": m.group(2).strip(), "목적": "", "판정": ""}
+        for k in ("목적", "판정"):
+            mm = re.search(rf"^- {k}:\s*(.*)$", 덩이, re.M)
+            if mm:
+                항[k] = mm.group(1).strip()
+        나온것.append(항)
+    return 나온것
+
+
+def 훅글대장검사(뿌리: Path) -> list[str]:
+    문제 = []
+    for 항 in 훅글항들(뿌리):
+        if not any(m in 항["목적"] for m in 목적들):
+            문제.append(f"{훅글파일} {항['번호']}: 목적 줄에 목적 다섯({' · '.join(목적들)}) 가운데 것이 없다")
+        if not 항["판정"]:
+            문제.append(f"{훅글파일} {항['번호']}: 판정 줄이 없다 — 읽힘이나 시뮬로 본 결과를 적는다")
+    return 문제
+
+
+def 규칙대장(뿌리: Path, c: dict | None = None) -> list[str]:
+    """클로드가 읽는 규칙 전부에 목적과 시험이 달려 있나 — 기계 규칙 · 판단 규칙 · 훅 글. 하나라도 빠지면 커밋을 막는다 (2026-09-17)."""
+    return 대장검사(뿌리) + 판단대장검사(뿌리) + 훅글대장검사(뿌리)
+
+
+def 목적별(뿌리: Path) -> dict[str, dict[str, list[str]]]:
+    """목적 다섯마다 그것을 지키는 기계 규칙 · 판단 규칙 · 훅 글의 이름."""
+    from 판정 import 규칙이름들
+    표: dict[str, dict[str, list[str]]] = {m: {"기계": [], "판단": [], "훅글": []} for m in 목적들}
     for r in 대장(뿌리):
-        줄.append(f"| {r.get('이름','')} | {r.get('문장','')} | {' · '.join(r.get('자리') or [])} | {r.get('검사','')} |")
+        for m in r.get("목적") or []:
+            if m in 표:
+                표[m]["기계"].append(str(r.get("이름")))
+    이름 = 규칙이름들(뿌리)
+    for 번호, 항 in 판단대장(뿌리).items():
+        for m in 항["목적"]:
+            if m in 표:
+                표[m]["판단"].append(f"{번호} {이름.get(번호, '')}".strip())
+    for 항 in 훅글항들(뿌리):
+        for m in 목적들:
+            if m in 항["목적"]:
+                표[m]["훅글"].append(항["번호"])
+    return 표
+
+
+def 보이기(뿌리: Path) -> str:
+    줄 = ["| 이름 | 규칙 | 자리 | 검사 | 목적 | 시험 |", "|---|---|---|---|---|---|"]
+    for r in 대장(뿌리):
+        시험 = r.get("시험") if isinstance(r.get("시험"), list) else [r.get("시험")] if r.get("시험") else []
+        줄.append(f"| {r.get('이름','')} | {r.get('문장','')} | {' · '.join(r.get('자리') or [])} | {r.get('검사','')} | "
+                 f"{' · '.join(r.get('목적') or [])} | {' · '.join(str(x) for x in 시험)} |")
     return "\n".join(줄)
 
 
@@ -176,7 +313,7 @@ def 지금검사(뿌리: Path, c: dict | None = None) -> list[str]:
     """작업 트리에서 지금 걸리는 것 전부 (ops check)."""
     import 생성, 지금, 표시
     c = c or 설정(뿌리)
-    문제 = 대장검사(뿌리)
+    문제 = 규칙대장(뿌리, c)
     문제 += 표시.검사_새줄(뿌리, c, 스테이지=False)
     옛 = "\n".join(옛줄전부(뿌리, c))
     for p in 주제파일들(뿌리, c):
@@ -194,7 +331,7 @@ def 커밋검사(뿌리: Path, c: dict | None = None) -> list[str]:
     """스테이지에서 걸리는 것 전부 (pre-commit)."""
     import 생성, 지금, 표시
     c = c or 설정(뿌리)
-    문제 = 대장검사(뿌리)
+    문제 = 규칙대장(뿌리, c)
     문제 += 표시.검사_새줄(뿌리, c, 스테이지=True)
     문제 += 표시.제안이확인으로(뿌리, c, 스테이지=True)
     스테이지된 = [x for x in git(뿌리, "diff", "--cached", "--name-only").split("\n") if x]

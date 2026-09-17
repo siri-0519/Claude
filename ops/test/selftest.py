@@ -32,8 +32,9 @@ def git(r: Path, *a: str) -> str:
 
 def 임시레포() -> Path:
     d = Path(tempfile.mkdtemp(prefix="ops-selftest-"))
-    for 것 in ("ops", ".claude"):
-        shutil.copytree(틀 / 것, d / 것, ignore=shutil.ignore_patterns("__pycache__"))
+    for 것 in ("ops", ".claude", ".github"):     # .github 도 — 기계 규칙 「자체시험합치기」의 시험이 워크플로 파일을 가리킨다 (2026-09-17)
+        if (틀 / 것).is_dir():
+            shutil.copytree(틀 / 것, d / 것, ignore=shutil.ignore_patterns("__pycache__"))
     (d / ".ops.yml").write_text(
         "이름: 시험\n소개: 시험 레포다.\n주제파일: ['*.md']\n결정로그: decisions.md\n"
         "제외: [README.md, STATUS.md, CLAUDE.md, worklog.md, guide.md, 'memory/**', 'ops/**', '.claude/**']\n"   # guide.md 는 안내(파생물)지 주제 파일이 아니다
@@ -194,8 +195,36 @@ def main() -> int:
     확인(기계.상대날짜('사용자가 "아까 안 한다는거 아녔어?" 하고 물었다. 「방금」 도 그렇다.', c) == [] and 기계.상대날짜("아까 물었다.", c) == ["아까"],
          "따옴표와 「」 안에 옮긴 말의 상대 날짜는 걸지 않고, 밖의 것은 건다")
 
+    print("규칙 대장 · 목적과 시험")
+    import re as _re
+    확인(기계.규칙대장(r) == [], "기계 · 판단 · 훅 글에 목적과 시험이 다 있다", " / ".join(기계.규칙대장(r))[:300])
+    y = r / "ops/rules/기계.yml"; 옛y = y.read_text(encoding="utf-8")
+    y.write_text(옛y.replace("  목적: [맥락 유지, 좋은 설명]\n", "", 1), encoding="utf-8")
+    확인(any("목적 칸이 없다" in x for x in 기계.대장검사(r)), "기계 규칙에 목적이 없으면 잡는다")
+    y.write_text(옛y.replace('"시뮬: S2"', '"시뮬: S99"', 1), encoding="utf-8")
+    확인(any("그 시나리오가 없다" in x for x in 기계.대장검사(r)), "시험 참조가 실재하지 않으면 잡는다")
+    y.write_text(옛y, encoding="utf-8")
+    j = r / "ops/rules/판단.md"; 옛j = j.read_text(encoding="utf-8")
+    j.write_text(_re.sub(r"^\| 9 \|.*\n", "", 옛j, flags=_re.M), encoding="utf-8")
+    확인(any("규칙 9 이" in x for x in 기계.판단대장검사(r)), "판단 규칙 표에 행이 없으면 잡는다")
+    j.write_text(옛j, encoding="utf-8")
+    h = r / "ops/rules/훅-글.md"; 옛h = h.read_text(encoding="utf-8")
+    h.write_text(_re.sub(r"^- 목적: 맥락 유지 — 새 세션이.*$", "- 목적: 새 세션이 상태를 알게 한다", 옛h, count=1, flags=_re.M), encoding="utf-8")
+    확인(any("A1:" in x for x in 기계.훅글대장검사(r)), "훅 글에 목적이 없으면 잡는다")
+    h.write_text(옛h, encoding="utf-8")
+    확인(기계.목차크기(r, c, "# 목차\n" + "\n".join(f"- 줄 {i}" for i in range(801))) != [], "CLAUDE.md 가 800줄을 넘으면 잡는다")
+    import 지금 as _지금
+    b = r / "body.md"; 옛b = b.read_text(encoding="utf-8")
+    b.write_text(옛b.replace("## 지금\n\n", "## 지금\n\n" + "".join(f"- 채움 {i} [제안].\n" for i in range(10)), 1), encoding="utf-8")
+    확인(_지금.검사(r, c) != [], "「지금」 절이 열 줄을 넘으면 잡는다")
+    b.write_text(옛b, encoding="utf-8")
+    code, out = ops(r, "목표")
+    확인(code == 0 and all(m in out for m in ("규칙 준수", "맥락 유지", "토큰 절약", "정보 추적성", "좋은 설명")), "ops 목표 가 목적 다섯을 보인다", out[-300:])
+    code, out = ops(r, "rules", "--목적별")
+    확인(code == 0 and "| 좋은 설명 |" in out, "ops rules --목적별 이 목적마다의 규칙을 보인다", out[-300:])
+
     print("커밋 직전 · 대장")
-    확인(기계.대장검사(r) == [], "기계 규칙 대장에 네 칸이 다 있다")
+    확인(기계.대장검사(r) == [], "기계 규칙 대장에 여섯 칸이 다 있다")
     git(r, "add", "-A")
     문제 = 기계.커밋검사(r, c)
     확인(any("worklog.md" in x for x in 문제) is False, "worklog.md 는 .gitignore 라 스테이지에 없다")
