@@ -83,6 +83,14 @@ def 세션시작(뿌리: Path, c: dict, p: dict) -> int:
         글.append(목록.strip())
     else:
         글.append("어긋남 목록(memory/어긋남.md)은 비어 있다.")
+    try:                                    # 기계가 스스로 잡은 문제 — 사용자가 보기 전에 세션이 안다 (목표.경보, 2026-09-17)
+        import 목표
+        경보들 = 목표.경보(뿌리, c)
+    except Exception as e:  # noqa: BLE001
+        경보들 = [f"경보를 못 셌다: {e}"]
+    if 경보들:
+        글.append("")
+        글.append(f"경보 {len(경보들)}개 (`ops 목표` 가 전부 보인다 — 이번 세션의 일과 상관없어도 첫 답에 한 줄로 알린다): " + " / ".join(경보들)[:600])
     if p.get("source") in ("compact", "resume"):
         글.append("")
         글.append("대화가 요약으로 바뀌었다. 요약 앞에서 읽은 파일은 문맥에 없다. 이번 물음에 걸리는 주제 파일(CLAUDE.md 「언제 무엇을 읽나」 표에서 물음의 말이 든 행의 파일)을 답하기 전에 다시 읽는다. 「고칠 때」 규칙도 다음 저장 때 다시 들어온다.")

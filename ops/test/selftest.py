@@ -222,6 +222,17 @@ def main() -> int:
     확인(code == 0 and all(m in out for m in ("규칙 준수", "맥락 유지", "토큰 절약", "정보 추적성", "좋은 설명")), "ops 목표 가 목적 다섯을 보인다", out[-300:])
     code, out = ops(r, "rules", "--목적별")
     확인(code == 0 and "| 좋은 설명 |" in out, "ops rules --목적별 이 목적마다의 규칙을 보인다", out[-300:])
+    (r / ".meta/시뮬").mkdir(parents=True, exist_ok=True)
+    (r / ".meta/시뮬/시험.jsonl").write_text('{"시나리오": "S1", "목표": "맥락 유지", "모델": "haiku", "초": 3, "통과": true, "검사": {"a": true}}\n'
+                                             '{"시나리오": "S2", "목표": "규칙 준수", "모델": "haiku", "초": 4, "통과": false, "검사": {"b": false}}\n'
+                                             '{"시나리오": "S2", "목표": "규칙 준수", "모델": "opus", "초": 4, "통과": false, "검사": {"b": false}}\n', encoding="utf-8")
+    code, out = ops(r, "시뮬", "--기록", str(r / ".meta/시뮬/시험.jsonl"), "--판", "시험판")
+    확인(code == 0 and (r / "memory/시뮬.jsonl").is_file() and len((r / "memory/시뮬.jsonl").read_text(encoding="utf-8").splitlines()) == 3, "ops 시뮬 --기록 이 결과를 memory/시뮬.jsonl 에 남긴다", out)
+    code, out = ops(r, "목표")
+    확인("1/3 통과" in out and "S2(haiku · opus)" in out, "ops 목표 가 시뮬 마지막 판과 모델 둘 이상이 실패한 시나리오를 경보로 보인다", out[-400:])
+    code, out, err = 훅돌리기(r, "session_start", {"session_id": "s", "source": "startup"})
+    확인(code == 0 and "경보" in out and "S2(haiku · opus)" in out, "세션 시작에 경보 한 줄이 들어간다", out[-300:])
+    (r / "memory/시뮬.jsonl").unlink()
 
     print("커밋 직전 · 대장")
     확인(기계.대장검사(r) == [], "기계 규칙 대장에 여섯 칸이 다 있다")
