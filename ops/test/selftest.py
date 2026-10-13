@@ -367,44 +367,6 @@ def main() -> int:
     code, out, err = 훅돌리기(r, "user_prompt_submit", {"cwd": str(r)})
     확인(code == 0 and "어긋남" in out, "물음 직전에 어긋남 개수 한 줄이 들어간다")
 
-    print("미리 판정")
-    # 2026-10-13 사용자: 답 끝에서 걸리면 답이 이미 나간 뒤라 고친 말이 뒤에 따로 붙는다 — 내기 전에 `ops 판정 --글` 로 돌리고,
-    # 통과한 글 그대로 낸 답은 답 끝 훅이 다시 판정하지 않는다. 판정 명령은 부를 때마다 표를 남기는 가짜다.
-    가짜 = Path(tempfile.mkdtemp(prefix="ops-fakejudge-")); 표 = 가짜 / "불림"
-    (가짜 / "judge").write_text("#!/usr/bin/env python3\nimport os, sys\nsys.stdin.read()\nopen(os.environ['OPS_FAKE_MARK'], 'a').write('1')\n"
-                              "print(os.environ.get('OPS_FAKE_OUT') or '{\"어긴것\": []}')\n", encoding="utf-8")
-    (가짜 / "judge").chmod(0o755)
-    os.environ.update(OPS_PREPASS=str(가짜 / "미리통과.json"), OPS_FAKE_MARK=str(표), OPS_FAKE_OUT="")
-    y = r / ".ops.yml"; 옛y3 = y.read_text(encoding="utf-8")
-    확인("  끄기: true\n" in 옛y3, "시험 레포는 판정을 끈 채로 여기에 온다")
-    y.write_text(옛y3.replace("  끄기: true\n", f"  끄기: false\n  명령: '{가짜 / 'judge'}'\n", 1), encoding="utf-8")
-    code, out, err = 훅돌리기(r, "user_prompt_submit", {"cwd": str(r), "transcript_path": str(tr)})
-    확인(공통.상태읽기(r, "session.json").get("대화") == str(tr), "물음 직전에 대화 파일 자리를 세션 상태에 둔다")
-    초안글 = "2026-09-01 에 본 값으로는 허리가 괜찮다. 계단은 한 번에 두 층까지 오르고, 걷기는 하루 30분을 이어 간다. 이 글은 내기 전에 판정을 먼저 거친다."
-    초안 = 가짜 / "초안.md"; 초안.write_text(초안글 + "\n", encoding="utf-8")
-    code, out = ops(r, "판정", "--글", str(초안))
-    확인(code == 0 and "걸린 것이 없다" in out and 판정.열쇠(초안글) in 판정.미리통과들() and 표.read_text() == "1",
-         "초안이 판정을 통과하면 그 지문을 적어 둔다", out[:200])
-    def 답으로(글: str) -> None:
-        tr.write_text(json.dumps({"type": "user", "message": {"content": "허리 어때"}}) + "\n" +
-                      json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": 글}]}}) + "\n", encoding="utf-8")
-    os.environ["OPS_FAKE_OUT"] = '{"어긴것": [{"규칙": "6", "문장": "판정을 먼저 거친다", "이유": "시험"}]}'
-    답으로(초안글 + "  \n\n")
-    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
-    확인(표.read_text() == "1" and "판단 규칙에 걸렸다" not in err, "미리 통과한 글 그대로 낸 답은 답 끝에 다시 판정하지 않는다", err[:200])
-    답으로(초안글 + " 덧붙인 문장이 하나 있다.")
-    code, out, err = 훅돌리기(r, "stop", {"transcript_path": str(tr), "cwd": str(r)})
-    확인(표.read_text() == "11" and code == 2 and "판단 규칙에 걸렸다" in err and "판정 --글" in err,
-         "미리 통과한 글과 다른 답은 지금처럼 판정하고, 되돌리는 글이 다음부터 미리 돌리라고 알린다", err[:200])
-    다른 = 가짜 / "다른.md"; 다른.write_text(초안글 + " 다른 초안이다.\n", encoding="utf-8")
-    code, out = ops(r, "판정", "--글", str(다른))
-    확인(code == 1 and "초안이 판단 규칙에 걸렸다" in out and "판정을 먼저 거친다" in out and 판정.열쇠(다른.read_text()) not in 판정.미리통과들(),
-         "걸린 초안은 걸린 문장을 보이고 지문을 적지 않는다", out[:200])
-    y.write_text(옛y3, encoding="utf-8")
-    for k in ("OPS_PREPASS", "OPS_FAKE_MARK", "OPS_FAKE_OUT"):
-        os.environ.pop(k, None)
-    shutil.rmtree(가짜, ignore_errors=True)
-
     x = subprocess.run([sys.executable, str(r / "ops/bin/ops"), "hooks", "--push"], cwd=str(r), text=True, capture_output=True,
                        input="refs/heads/claude/x " + "1" * 40 + " refs/heads/main " + "0" * 40 + "\n")
     확인(x.returncode == 1 and "main" in x.stderr, "push 직전에 main 으로 직접 가는 push 를 막는다")

@@ -168,40 +168,11 @@ def 이름맞추기(뿌리: Path, 이름: str) -> str:
     return s
 
 
-def 열쇠(글: str) -> str:
-    """답 글의 지문. 줄 끝 공백과 앞뒤 빈 줄은 보지 않는다 — 미리 판정해 통과한 초안과 실제로 낸 답이 같은지 견준다."""
-    import hashlib
-    t = "\n".join(x.rstrip() for x in 글.strip().splitlines())
-    return hashlib.sha256(t.encode("utf-8")).hexdigest()
-
-
-def 미리통과파일() -> Path:
-    """미리 판정해 통과한 초안의 지문을 두는 곳. 레포마다의 .meta/ 가 아니라 집 디렉터리에 둔다 —
-    레포 여럿 위에서 연 세션에서는 레포마다 답 끝 훅이 돌므로, 어느 레포의 답 끝 훅이든 같은 파일을 본다."""
-    import os
-    return Path(os.environ.get("OPS_PREPASS") or (Path.home() / ".claude" / "ops-미리통과.json"))
-
-
-def 미리통과들() -> list[str]:
-    try:
-        return [str(x) for x in json.loads(미리통과파일().read_text(encoding="utf-8"))]
-    except (OSError, ValueError, TypeError):
-        return []
-
-
-def 미리통과적기(지문: str) -> None:
-    p = 미리통과파일()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps((미리통과들() + [지문])[-50:]) + "\n", encoding="utf-8")
-
-
 def 되돌리는말(어긴것: list[dict], 뿌리: Path | None = None) -> str:
     전문 = 규칙전문들(뿌리) if 뿌리 else {}
     줄 = ["방금 쓴 답이 판단 규칙에 걸렸다. 판단 규칙은 다른 모델이 판정한 것이다. "
           "걸린 문장마다 「무엇을 왜 고쳤다」 한 줄을 적고 그 아래에 고친 문장을 낸다. 고치지 않은 문장은 다시 붙이지 않는다 — 답 전체를 다시 내면 사용자에게 같은 답이 두 번 보이고, 고친 문장만 내면 앞뒤 없는 문장으로 보인다 (2026-09-17)."
-          "걸린 것이 문장 하나가 아니라 여러 문장의 모양(견줄 것을 문장으로 늘어놓음 · 차례를 한 문단에 이음)이면, 그 문장들 대신 표 하나나 번호 줄을 낸다. "
-          "고친 글은 이미 나간 답 뒤에 따로 보이므로 「표 앞에 넣었다」처럼 나간 답의 자리를 가리키지 않는다. "
-          "다음 답부터는 내기 전에 `ops/bin/ops 판정 --글 <파일>` 로 먼저 돌려, 고친 말이 답 뒤에 따로 붙지 않게 한다 (2026-10-13 사용자)."]
+          "걸린 것이 문장 하나가 아니라 여러 문장의 모양(견줄 것을 문장으로 늘어놓음 · 차례를 한 문단에 이음)이면, 그 문장들 대신 표 하나나 번호 줄을 낸다."]
     for x in 어긴것:
         번호 = x['규칙']
         줄.append(f"- 걸린 문장: {x['문장']}" + (f" — {x['이유']}" if x['이유'] else ""))
