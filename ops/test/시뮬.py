@@ -204,10 +204,9 @@ def S11검사(d, bare, 답):
             "push 됐다": push됐나(d, bare)}
 
 def S12검사(d, bare, 답):
-    고친 = git(d, "diff", "--name-only", "main", "HEAD")
+    # 2026-10-13 판단 규칙 7 을 다시 썼다 — 모호한 요청에도 승인을 기다리지 않고, 이해한 의도와 범위를 먼저 말한 뒤 그와 함께 진행한다
     전부 = 답전부(d) or 답
-    return {"파일을 고치지 않았다": 깨끗한가(d) and not [f for f in 고친.split("\n") if f and not f.startswith("memory/")],
-            "되물었다(물음표나 확인 · 승인)": any(k in 전부 for k in ("?", "확인", "맞", "승인")), "push 됐다": push됐나(d, bare)}
+    return {"이해한 것과 할 일을 먼저 말했다(이해 · 하겠)": "이해" in 전부 and "하겠" in 전부, "push 됐다": push됐나(d, bare)}
 
 def S13검사(d, bare, 답):
     줄 = 줄찾기(d, "diet.md", "아침") if (d / "diet.md").is_file() else ""
