@@ -20,6 +20,7 @@ from pathlib import Path
 
 여기 = Path(__file__).resolve().parent
 판 = sys.argv[1] if len(sys.argv) > 1 else "1"
+회 = sys.argv[2] if len(sys.argv) > 2 else ""   # 같은 문장을 다시 돌릴 때의 번호. 결과 파일 이름에만 쓴다
 위 = 여기.parent
 규칙들 = [
     ("규칙을 정하는 법", "규칙을-정하는-법.md", (여기 / ("첫째규칙.txt" if 판 == "1" else f"첫째규칙-{판}.txt")).read_text(encoding="utf-8").strip()),
@@ -240,7 +241,7 @@ def main() -> int:
         결과 = list(ex.map(lambda f: f[0](*f[1]), 일들))
     with ThreadPoolExecutor(14) as ex:
         결과 = [x for x in 결과 if x["종류"] == "설명"] + list(ex.map(판정, [x for x in 결과 if x["종류"] == "상황"]))
-    (여기 / f"결과-{판}.json").write_text(json.dumps({"규칙": {r[0]: r[2] for r in 규칙들},
+    (여기 / (f"결과-{판}-{회}.json" if 회 else f"결과-{판}.json")).write_text(json.dumps({"규칙": {r[0]: r[2] for r in 규칙들},
                                                  "판정모델": 판정모델, "결과": 결과}, ensure_ascii=False, indent=1), encoding="utf-8")
     줄들 = [x for x in 결과 if x["종류"] == "상황"]
     for 앞 in ("규칙3", "규칙2", "규칙1"):
