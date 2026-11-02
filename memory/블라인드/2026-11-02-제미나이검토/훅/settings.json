@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit|Write|MultiEdit|Bash",
+       "hooks": [{"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/용어.py\""}]}
+    ]
+  }
+}
