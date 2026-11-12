@@ -31,7 +31,7 @@ export type TitleState = {
 }
 
 /**
- * AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나. 화면에는 title(의도) · guesses(짐작) · gap(물음)만 보이고,
+ * AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나. 입력창 위 영역에는 title(의도) · assumptions(가정) · question(확인 질문)만 보이고,
  * original · reason 은 세션마다 파일(~/.claude/goal-pane/기록/<세션 id>.jsonl)에 따로 쌓인다
  */
 export type RequestEntry = {
@@ -39,10 +39,10 @@ export type RequestEntry = {
   said_at: string
   /** 의도: 사용자의 최근 요청을 어떻게 이해했나, 한 문장 */
   title: string
-  /** 사용자가 말하지 않았는데 AI 에이전트가 짐작하거나 대신 고른 것. 띠에 노랗게 보인다 */
-  guesses?: string[]
-  /** 사용자에게 물을 것 */
-  gap?: string
+  /** 가정: 사용자가 말하지 않았는데 AI 에이전트가 전제하거나 대신 고른 것. 화면에 노랗게 보인다 */
+  assumptions?: string[]
+  /** 확인 질문: 사용자에게 물어야 할 것 */
+  question?: string
   /** 근거가 된 사용자의 말 그대로 */
   original: string
   /** 왜 그렇게 이해했나: 어느 말 · 어떤 앞 맥락 때문인지, 짐작한 것 */
