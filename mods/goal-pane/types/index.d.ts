@@ -1,6 +1,3 @@
-/** 문장 하나. AI 에이전트가 고르거나 짐작한 문장은 mark 가 guess (SSoT 기록 확인함과 같은 표시) */
-export type Sentence = { t: string; mark?: 'guess' }
-
 /** 지난 목표 하나 */
 export type PastGoal = { goal: string; label: string; since: string; why: string }
 
@@ -32,7 +29,7 @@ export type GoalState = {
 
 /**
  * 요청 하나를 AI 에이전트가 이해해 적은 것.
- * 칸은 SSoT 기록 확인함의 기록 한 건(kind · source · said_at · title · body · gap · original)을 따른다
+ * 칸은 SSoT 기록 확인함의 기록 한 건(kind · source · said_at · title · gap · original)을 따른다. 목적(body)은 의도와 겹쳐 뺐다(2026-11-12 사용자)
  */
 export type RequestEntry = {
   /** 기록 종류. 이 모드가 적는 것은 늘 「요청」 */
@@ -43,8 +40,6 @@ export type RequestEntry = {
   said_at: string
   /** 의도: 이번 요청으로 사용자가 무엇을 원하나, 한 문장 */
   title: string
-  /** 목적: 그래서 무슨 작업을 어디까지 하나, 문장마다 하나 */
-  body: Sentence[]
   /** 사용자에게 물을 것 */
   gap?: { prompt: string }
   /** 근거가 된 사용자의 말 그대로 */

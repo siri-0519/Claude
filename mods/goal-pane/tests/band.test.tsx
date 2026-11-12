@@ -66,22 +66,21 @@ test('적어도 상태 줄과 알림은 쓰지 않는다', async ($, on) => {
 
     return { value: undefined }
   })
-  await $.tool.call({ tool: TOOL_FULL, title: '의도1', body: [{ t: '목적1' }], original: '말1', goal: '목표1', label: '짧은1' })
-  await $.tool.call({ tool: TOOL_FULL, title: '의도2', body: [], original: '말2', goal: '목표2', label: '짧은2', changed: true, why: '바뀜' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말1', goal: '목표1', label: '짧은1' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말2', goal: '목표2', label: '짧은2', changed: true, why: '바뀜' })
   expect(calls).toBe(0)
 })
 
-test('띠: 목표는 위에 굵게, 이번 요청의 의도 · 목적 · 짐작 · 물음은 그 아래', async ($, on) => {
+test('띠: 목표는 위에 굵게, 이번 요청의 의도와 물음은 그 아래, 목적 줄은 없다', async ($, on) => {
   engineDraws(on)
   const empty = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await empty.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
   await empty.unmount()
 
-  await $.tool.call({ tool: TOOL_FULL, title: '첫 의도', body: [{ t: '첫 목적' }], original: '첫 말', goal: '모드를 다듬는다', label: '모드 다듬기' })
+  await $.tool.call({ tool: TOOL_FULL, title: '첫 의도', original: '첫 말', goal: '모드를 다듬는다', label: '모드 다듬기' })
   await $.tool.call({
     tool: TOOL_FULL,
     title: '둘째 의도',
-    body: [{ t: '물어보고 멈춘다' }, { t: '로그는 git 기록일 것이다', mark: 'guess' }],
     gap: '로그는 무엇인가요?',
     original: '로그 다 읽을 수 있나',
   })
@@ -92,8 +91,8 @@ test('띠: 목표는 위에 굵게, 이번 요청의 의도 · 목적 · 짐작 
     expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /둘째 의도/ }))?.text).toContain('의도')
     expect((await ui.find({ type: 'Text', text: /첫 의도/ }))?.text).toBe(undefined)
-    expect((await ui.find({ type: 'Text', text: /물어보고 멈춘다/ }))?.text).toContain('목적')
-    expect((await ui.find({ type: 'Text', text: /git 기록일 것이다/ }))?.text).toContain('AI 짐작')
+    // 목적 줄은 의도와 겹쳐 뺐다
+    expect((await ui.find({ type: 'Text', text: /목적/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /물음/ }))?.text).toContain('로그는 무엇인가요?')
     expect((await ui.find({ type: 'Text', text: /들은 말/ }))?.text).toContain('지난 요청 1건')
     await ui.unmount()
@@ -102,15 +101,15 @@ test('띠: 목표는 위에 굵게, 이번 요청의 의도 · 목적 · 짐작 
 
 test('목표는 changed 일 때만 바뀌고, 바뀌면 띠에 이전 목표와 까닭이 붙는다', async ($, on) => {
   engineDraws(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '의도1', body: [], original: '말', goal: '처음 목표', label: '처음' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말', goal: '처음 목표', label: '처음' })
   // changed 없이 다른 목표를 적으면 무시한다: 요청마다 목표가 흔들리지 않게
-  await $.tool.call({ tool: TOOL_FULL, title: '의도2', body: [], original: '말', goal: '슬쩍 바꾼 목표', label: '슬쩍' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말', goal: '슬쩍 바꾼 목표', label: '슬쩍' })
   let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /처음 목표/ }))?.text).toContain('처음 목표')
   expect((await ui.find({ type: 'Text', text: /슬쩍 바꾼 목표/ }))?.text).toBe(undefined)
   await ui.unmount()
 
-  await $.tool.call({ tool: TOOL_FULL, title: '의도3', body: [], original: '말', goal: '새 목표', label: '새', changed: true, why: '사용자가 방향을 바꿈' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도3', original: '말', goal: '새 목표', label: '새', changed: true, why: '사용자가 방향을 바꿈' })
   ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /새 목표/ }))?.text).toContain('새 목표')
   const changed = (await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text ?? ''
@@ -125,12 +124,12 @@ test('제목: 앞은 그대로, 맨 뒤 대괄호만 모드가 바꾼다. 바뀐
   // 목표가 없으면 제목을 건드리지 않는다
   expect(await submit($, '모드 설치 및 설정')).toBe(undefined)
 
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', body: [], original: '말', goal: '목표1', label: '의도 이해 실시간 표시' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표1', label: '의도 이해 실시간 표시' })
   expect(await submit($, '모드 설치 및 설정')).toBe('모드 설치 및 설정 [의도 이해 실시간 표시]')
   // 이미 맞으면 다시 쓰지 않는다
   expect(await submit($, '모드 설치 및 설정 [의도 이해 실시간 표시]')).toBe(undefined)
 
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', body: [], original: '말', goal: '목표2', label: '제목 규칙 정하기', changed: true, why: '바뀜' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표2', label: '제목 규칙 정하기', changed: true, why: '바뀜' })
   // 바뀐 직후 띠에는 바뀐 사실이 보인다
   let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toContain('목표1')
@@ -154,13 +153,13 @@ test('제목: 앞은 그대로, 맨 뒤 대괄호만 모드가 바꾼다. 바뀐
 
 test('짧은 목표에 대괄호가 들어오면 빼서 제목 규칙이 깨지지 않게 한다', async ($, on) => {
   noSettingsHooks(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', body: [], original: '말', goal: '목표', label: '[괄호] 목표' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표', label: '[괄호] 목표' })
   expect(await submit($, '제목')).toBe('제목 [괄호 목표]')
 })
 
 test('설문이 띠를 쓰는 동안에는 비켜 준다', async ($, on) => {
   engineDraws(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '어떤 의도', body: [], original: '말', goal: '목표', label: '목표' })
+  await $.tool.call({ tool: TOOL_FULL, title: '어떤 의도', original: '말', goal: '목표', label: '목표' })
 
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')

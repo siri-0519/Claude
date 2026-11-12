@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { GoalState, RequestEntry, Sentence } from '../types'
+import type { GoalState, RequestEntry } from '../types'
 
 const PANE = 'goal'
 const TITLE = '목표와 이해한 의도'
@@ -17,14 +17,14 @@ const RULE = [
   '이 세션에는 사용자가 보는 띠가 입력창 바로 위에 있고, 세션 제목 맨 뒤 대괄호에도 목표가 붙는다.',
   '이것은 AI 에이전트가 사용자를 어떻게 이해하고 있는지 늘 보여 주어, 이해가 어긋나거나 사용자의 뜻이 바뀌었을 때 사용자가 바로 알아차리고 고칠 수 있게 하려는 것이다.',
   '목표와 의도는 다르다. 목표는 사용자의 요청 하나하나가 결과적으로 무엇을 하기 위함인가이고, 자주 바뀌지 않는다. 의도는 이번 요청 하나로 사용자가 무엇을 원하는가이고, 메시지마다 다르다.',
-  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 이번 요청을 적는다: title(의도 한 문장), body(목적: 이번 답에서 무엇을 어디까지 하고 무엇은 하지 않는지, 문장마다 하나. 사용자가 정하지 않았는데 고르거나 짐작한 문장은 mark "guess"), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로).`,
+  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 이번 요청을 적는다: title(의도 한 문장), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로).`,
   '목표(goal)와 짧은 목표(label, 20자 안팎)는 처음 한 번, 그리고 목표 자체가 바뀌었을 때만 적는다. 바뀌었으면 changed 를 true 로 하고 무엇이 왜 바뀌었는지(사용자의 어느 말 때문인지) why 에 적는다. 요청마다 의도가 달라지는 것은 목표가 바뀐 것이 아니다.',
   '사용자의 말을 부풀리지 않는다: 「할 수도 있다」를 「한다」로, 「그중 하나」를 「전부」로 바꾸지 않는다. gap 에 물음이 있으면 답을 받기 전에는 그 짐작대로 진행하지 않는다.',
   '세션 제목은 대괄호 앞은 사용자가, 맨 뒤 대괄호는 이 모드가 바꾼다. AI 에이전트는 제목을 직접 바꾸지 않는다.',
 ].join('\n')
 
 // 메시지마다 붙이는 짧은 지침
-const NUDGE = `목표 · 의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 이번 요청을 적는다. title = 의도(이번 요청으로 무엇을 원하나, 한 문장), body = 목적(무슨 작업을 어디까지 하고 무엇은 안 하나, 문장마다 하나, 짐작이나 직접 고른 것은 mark "guess"), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로. goal(목표: 요청들이 결과적으로 무엇을 하기 위함인가)과 label(짧은 목표, 20자 안팎)은 처음과 목표 자체가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
+const NUDGE = `목표 · 의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 이번 요청을 적는다. title = 의도(이번 요청으로 무엇을 원하나, 한 문장), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로. goal(목표: 요청들이 결과적으로 무엇을 하기 위함인가)과 label(짧은 목표, 20자 안팎)은 처음과 목표 자체가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
@@ -32,22 +32,6 @@ function str(v: unknown): string {
 
 function strList(v: unknown): string[] {
   return Array.isArray(v) ? v.map(str).filter(s => s.length > 0).slice(0, 8) : []
-}
-
-// body 는 문장 목록. 문자열만 온 경우도 받아 준다
-function sentences(v: unknown): Sentence[] {
-  if (typeof v === 'string') return v.trim() ? [{ t: v.trim() }] : []
-  if (!Array.isArray(v)) return []
-  const out: Sentence[] = []
-  for (const s of v.slice(0, 8)) {
-    if (typeof s === 'string' && s.trim()) out.push({ t: s.trim() })
-    else if (s && typeof s === 'object') {
-      const t = str((s as Record<string, unknown>).t)
-      if (t) out.push((s as Record<string, unknown>).mark === 'guess' ? { t, mark: 'guess' } : { t })
-    }
-  }
-
-  return out
 }
 
 // 짧은 목표가 없으면 목표 문장 앞부분으로 만든다. 대괄호는 제목 규칙을 깨므로 뺀다
@@ -68,7 +52,6 @@ function toRequest(input: Record<string, unknown>, at: string): RequestEntry | n
     source: '사용자',
     said_at: at,
     title,
-    body: sentences(input.body),
     ...(gapText ? { gap: { prompt: gapText } } : {}),
     original: str(input.original),
   }
@@ -155,23 +138,6 @@ function requestTree({ Box, Text }: Els, r: RequestEntry, foot: string) {
         </Text>
         <Text>{r.title}</Text>
       </Text>
-      {r.body.map((s, i) => (
-        <Text>
-          <Text size="caption" dimColor>
-            {i === 0 ? '목적  ' : '      '}
-          </Text>
-          {s.mark === 'guess' ? (
-            <Text color="warning">
-              {s.t}
-              <Text size="caption" color="warning">
-                {'  '}AI 짐작 · 확인 필요
-              </Text>
-            </Text>
-          ) : (
-            <Text>{s.t}</Text>
-          )}
-        </Text>
-      ))}
       {r.gap && (
         <Text color="warning">
           <Text bold color="warning">
@@ -192,23 +158,11 @@ export const register: Register = on => {
     await $.tool.register({
       name: TOOL,
       description:
-        '사용자가 보는 띠에, AI 에이전트가 이번 요청을 어떻게 이해했는지(의도 · 목적 · 짐작 · 물음 · 들은 말)를 적는다. 이 대화의 목표는 처음과 목표가 바뀔 때만 함께 적는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
+        '사용자가 보는 띠에, AI 에이전트가 이번 요청을 어떻게 이해했는지(의도 · 물음 · 들은 말)를 적는다. 이 대화의 목표는 처음과 목표가 바뀔 때만 함께 적는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
       inputSchema: {
         type: 'object',
         properties: {
           title: { type: 'string', description: '의도: 이번 요청으로 사용자가 무엇을 원하는지 한 문장. 사용자의 말을 부풀리지 않는다.' },
-          body: {
-            type: 'array',
-            description: '목적: 그래서 이번 답에서 무엇을 어디까지 하고 무엇은 하지 않는지, 문장마다 하나.',
-            items: {
-              type: 'object',
-              properties: {
-                t: { type: 'string', description: '문장 하나' },
-                mark: { type: 'string', enum: ['guess'], description: '사용자가 정하지 않았는데 AI 에이전트가 고르거나 짐작한 문장이면 "guess"' },
-              },
-              required: ['t'],
-            },
-          },
           gap: { type: 'string', description: '확인하지 못해 사용자에게 물어야 할 것. 없으면 비운다.' },
           original: { type: 'string', description: '이번 이해의 근거가 된 사용자의 말. 짧게, 그대로 옮긴다.' },
           goal: { type: 'string', description: '목표: 사용자의 요청들이 결과적으로 무엇을 하기 위함인가. 처음 한 번과 목표 자체가 바뀔 때만 적는다.' },
@@ -216,7 +170,7 @@ export const register: Register = on => {
           changed: { type: 'boolean', description: '목표 자체가 바뀌었으면 true. 요청마다 의도가 다른 것은 바뀐 것이 아니다.' },
           why: { type: 'string', description: '목표가 바뀌었다면 무엇이 왜 바뀌었는지, 사용자의 어느 말 때문인지' },
         },
-        required: ['title', 'body', 'original'],
+        required: ['title', 'original'],
       },
       isDeferred: false,
     })
