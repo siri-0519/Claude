@@ -1,6 +1,6 @@
 {
   "name": "goal-pane",
-  "version": "0.1.0",
-  "description": "사용자가 말할 때마다 AI 에이전트가 이해한 목표를 채팅 옆 패널에 띄우고, 목표가 바뀐 이력을 함께 보여 준다",
+  "version": "0.3.0",
+  "description": "사용자가 말할 때마다 AI 에이전트가 이해한 의도와 목적을 SSoT 기록 한 건의 형태로 입력창 위 띠에 보여 주고, /goal-pane 으로 지난 이해를 옆 패널에 연다",
   "types": "./types/index.d.ts"
 }
