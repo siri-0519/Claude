@@ -1,0 +1,6 @@
+{
+  "name": "goal-pane",
+  "version": "0.1.0",
+  "description": "사용자가 말할 때마다 AI 에이전트가 이해한 목표를 채팅 옆 패널에 띄우고, 목표가 바뀐 이력을 함께 보여 준다",
+  "types": "./types/index.d.ts"
+}
