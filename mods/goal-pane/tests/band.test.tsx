@@ -263,3 +263,15 @@ test('앱을 다시 켜 세션 상태가 비어도, 파일에 남은 앞 목표�
   await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '새 목표', changed: true, why: '같음' })
   expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}').flag).toBe('none')
 })
+
+test('가정 줄 끝에 「확인 필요」를 붙이지 않고, 틀렸다고 누른 뒤에만 「틀림」을 적는다', async ($, on) => {
+  engineDraws(on)
+  memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '꼬리표 의도', assumptions: ['꼬리표 가정'], original: '말', reason: '까닭' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /확인 필요/ }))?.text).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /틀림/ }))?.text).toBe(undefined)
+  await ui.press({ key: 'wrong-0' })
+  expect((await ui.find({ type: 'Text', text: /틀림/ }))?.text).toContain('틀림')
+  await ui.unmount()
+})

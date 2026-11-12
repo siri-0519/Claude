@@ -178,10 +178,12 @@ function intentTree({ Box, Text, Button }: Els, r: Pick<RequestEntry, 'title' | 
                 <Text color={tone} strikethrough={isWrong}>
                   {a}
                 </Text>
-                <Text size="caption" color={tone}>
-                  {'  '}
-                  {isWrong ? '틀림' : '확인 필요'}
-                </Text>
+                {/* 「확인 필요」는 「가정」이란 이름과 같은 말이라 붙이지 않는다(2026-11-12 사용자). 눌렀을 때만 상태를 적는다 */}
+                {isWrong && (
+                  <Text size="caption" color={tone}>
+                    {'  '}틀림
+                  </Text>
+                )}
               </Text>
             </Box>
             {Button && m.toggle && (
