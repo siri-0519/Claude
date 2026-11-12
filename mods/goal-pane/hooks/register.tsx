@@ -13,20 +13,20 @@ const goalAtom = atom({ plugin: 'goal-pane', key: 'goal' } as const, null as Goa
 const requests = atom({ plugin: 'goal-pane', key: 'requests' } as const, [] as RequestEntry[], { shape: 'req-2' })
 
 // 보여 주는 곳과 저장하는 곳을 나눈다(2026-11-12 사용자: 「판넬은 시각화 · 최적화용, 저장은 따로」).
-// 띠: 의도(AI가 사용자의 최근 요청을 어떻게 이해했나)와 물음. 목표: 세션 제목 맨 뒤 대괄호.
+// 띠: 의도(AI가 사용자의 최근 요청을 어떻게 이해했나) · 짐작 · 물음(짐작 · 물음은 있을 때만). 목표: 세션 제목 맨 뒤 대괄호.
 // 근거가 된 말 · 그렇게 이해한 까닭: 화면에 내지 않고 세션마다 파일에 쌓는다
 const RULE = [
   '이 세션에는 사용자가 보는 띠가 입력창 바로 위에 있고, 세션 제목 맨 뒤 대괄호에 목표가 붙는다. AI 에이전트가 사용자를 어떻게 이해하고 있는지 늘 보여 주어, 이해가 어긋나거나 사용자의 뜻이 바뀌었을 때 사용자가 바로 알아차리고 고칠 수 있게 하려는 것이다.',
   '의도는 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는가이고, 메시지마다 다르다. 목표는 사용자의 요청들이 궁극적으로 이루려는 것이고, 거의 바뀌지 않는다.',
-  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 적는다: title(의도 한 문장), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로), reason(왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지, 짐작한 것이 있으면 무엇인지).`,
-  '띠에는 의도와 물음만 보인다. original 과 reason 은 화면에 나오지 않고 나중에 이해를 되짚기 위해 따로 저장된다.',
+  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 적는다: title(의도 한 문장), guess(사용자가 말하지 않았는데 AI 에이전트가 짐작하거나 대신 고른 것, 있을 때만), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로), reason(왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지, 짐작한 것이 있으면 무엇인지).`,
+  '띠에는 의도 · 짐작 · 물음만 보인다(짐작과 물음은 있을 때만). original 과 reason 은 화면에 나오지 않고 나중에 이해를 되짚기 위해 따로 저장된다.',
   'goal 은 처음 한 번, 그리고 궁극적인 목표 자체가 바뀌었을 때만 적는다. 세션 제목 뒤에 붙으므로 20자 안팎으로 짧게 쓴다. 바뀌었으면 changed 를 true 로 하고 무엇이 왜 바뀌었는지(사용자의 어느 말 때문인지) why 에 적는다. 요청마다 의도가 달라지는 것은 목표가 바뀐 것이 아니다.',
   '사용자의 말을 부풀리지 않는다: 「할 수도 있다」를 「한다」로, 「그중 하나」를 「전부」로 바꾸지 않는다. gap 에 물음이 있으면 답을 받기 전에는 그 짐작대로 진행하지 않는다.',
   '세션 제목은 대괄호 앞은 사용자가, 맨 뒤 대괄호는 이 모드가 바꾼다. AI 에이전트는 제목을 직접 바꾸지 않는다.',
 ].join('\n')
 
 // 메시지마다 붙이는 짧은 지침
-const NUDGE = `의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 적는다. title = 의도(AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나, 한 문장), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로, reason = 왜 그렇게 이해했는지(어느 말 · 어떤 앞 맥락 때문인지, 짐작한 것). 띠에는 의도 · 물음만 보이고 original · reason 은 따로 저장된다. goal(사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎, 세션 제목 뒤에 붙음)은 처음과 궁극 목표가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
+const NUDGE = `의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 적는다. title = 의도(AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나, 한 문장), guess = 사용자가 말하지 않았는데 짐작하거나 대신 고른 것(있을 때만, 하나씩), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로, reason = 왜 그렇게 이해했는지(어느 말 · 어떤 앞 맥락 때문인지, 짐작한 것). 띠에는 의도 · 짐작 · 물음만 보이고 original · reason 은 따로 저장된다. goal(사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎, 세션 제목 뒤에 붙음)은 처음과 궁극 목표가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
@@ -49,9 +49,12 @@ function toRequest(input: Record<string, unknown>, at: string): RequestEntry | n
   if (!title) return null
   const gapText = str(input.gap) || strList(input.asks).join(' / ')
 
+  const guesses = typeof input.guess === 'string' ? strList([input.guess]) : strList(input.guess)
+
   return {
     said_at: at,
     title,
+    ...(guesses.length ? { guesses } : {}),
     ...(gapText ? { gap: gapText } : {}),
     original: str(input.original),
     reason: str(input.reason),
@@ -123,22 +126,33 @@ async function markTitle($: EngineInterface, goal: string, isChange: boolean): P
 
 type Els = { Box: any; Text: any }
 
-// 띠 · 카드 · 패널이 같이 쓰는 의도와 물음
-function intentTree({ Box, Text }: Els, title: string, gap: string | undefined) {
+// 띠 · 카드 · 패널이 같이 쓰는 의도 · 짐작 · 물음. 짐작과 물음은 있을 때만 줄이 생긴다
+function intentTree({ Box, Text }: Els, r: Pick<RequestEntry, 'title' | 'guesses' | 'gap'>) {
   return (
     <Box flexDirection="column">
       <Text>
         <Text size="caption" dimColor>
           의도{'  '}
         </Text>
-        <Text>{title}</Text>
+        <Text>{r.title}</Text>
       </Text>
-      {gap && (
+      {(r.guesses ?? []).map(g => (
+        <Text color="warning">
+          <Text size="caption" color="warning">
+            짐작{'  '}
+          </Text>
+          {g}
+          <Text size="caption" color="warning">
+            {'  '}AI 짐작 · 확인 필요
+          </Text>
+        </Text>
+      ))}
+      {r.gap && (
         <Text color="warning">
           <Text bold color="warning">
             물음{'  '}
           </Text>
-          {gap}
+          {r.gap}
         </Text>
       )}
     </Box>
@@ -150,11 +164,12 @@ export const register: Register = on => {
     await $.tool.register({
       name: TOOL,
       description:
-        '사용자가 보는 띠에 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지(의도)와 물을 것을 적고, 왜 그렇게 이해했는지(근거가 된 말 · 까닭)는 따로 저장한다. 궁극 목표는 처음과 바뀔 때만 적고, 세션 제목 맨 뒤 대괄호에 붙는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
+        '사용자가 보는 띠에 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지(의도) · 짐작한 것 · 물을 것을 적고, 왜 그렇게 이해했는지(근거가 된 말 · 까닭)는 따로 저장한다. 궁극 목표는 처음과 바뀔 때만 적고, 세션 제목 맨 뒤 대괄호에 붙는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
       inputSchema: {
         type: 'object',
         properties: {
           title: { type: 'string', description: '의도: AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지 한 문장. 사용자의 말을 부풀리지 않는다.' },
+          guess: { type: 'array', items: { type: 'string' }, description: '사용자가 말하지 않았는데 AI 에이전트가 짐작하거나 대신 고른 것, 하나씩. 띠에 노랗게 보인다. 없으면 비운다.' },
           gap: { type: 'string', description: '확인하지 못해 사용자에게 물어야 할 것. 없으면 비운다.' },
           original: { type: 'string', description: '이번 이해의 근거가 된 사용자의 말. 짧게, 그대로 옮긴다. 화면에는 나오지 않고 저장된다.' },
           reason: { type: 'string', description: '왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지, 짐작한 것이 있으면 무엇인지. 화면에는 나오지 않고 저장된다.' },
@@ -168,7 +183,7 @@ export const register: Register = on => {
     })
     // 명령 등록이 거절돼도 도구와 띠는 살아 있게 한다.
     // 옆 패널은 채팅 칸을 좁히므로 저절로 열지 않고, /goal-pane 을 입력할 때만 연다
-    await $.command.register({ name: 'goal-pane', description: '목표와 지난 의도를 옆 패널에 연다' }).catch(() => undefined)
+    await $.command.register({ name: 'goal-pane', description: '지금 의도와 지난 의도를 옆 패널에 연다' }).catch(() => undefined)
 
     return next(e)
   })
@@ -186,25 +201,19 @@ export const register: Register = on => {
     }
   }).catch(() => ({ text: '패널을 열지 못했습니다.' }))
 
-  // 대화 안에서도 보이도록, 적는 도구 줄 아래에 이번에 적은 의도 · 물음(목표를 바꿨으면 그것도)을 카드로 그린다
+  // 대화 안에서도 보이도록, 적는 도구 줄 아래에 이번에 적은 의도 · 짐작 · 물음을 카드로 그린다. 목표는 세션 제목에만 둔다
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     if (e.props.tool !== TOOL_FULL) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const row = await next(e)
     const input = (e.props.input ?? {}) as Record<string, unknown>
     const req = toRequest(input, '')
-    const goal = str(input.goal)
-    if (!req && !goal) return row
+    if (!req) return row
 
     return (
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
         {row}
-        {goal && (
-          <Text size="caption" dimColor>
-            {input.changed === true ? '목표 바뀜' : '목표'} [{shortGoal(goal)}]
-          </Text>
-        )}
-        {req && intentTree({ Box, Text }, req.title, req.gap)}
+        {intentTree({ Box, Text }, req)}
       </Box>
     )
   })
@@ -241,7 +250,7 @@ export const register: Register = on => {
       kind: goal ? (goal.n === 1 ? '목표 정함' : '목표 바뀜') : '의도',
       goal: now?.goal ?? '',
       ...(goal && goal.n > 1 ? { previous: old?.goal ?? '', why: goal.why } : {}),
-      ...(req ? { intent: req.title, gap: req.gap ?? '', original: req.original, reason: req.reason } : {}),
+      ...(req ? { intent: req.title, guesses: req.guesses ?? [], gap: req.gap ?? '', original: req.original, reason: req.reason } : {}),
     }).catch(() => problems.push('이해한 까닭을 저장하지 못했습니다.'))
     if (goal) await markTitle($, goal.goal, goal.n > 1).catch(() => problems.push('제목용 목표를 적지 못했습니다.'))
 
@@ -255,7 +264,7 @@ export const register: Register = on => {
     next.called ? next(e) : { deny: 'goal-pane: 저장하지 못했습니다. 답은 계속 써도 됩니다.' },
   )
 
-  // 입력창 바로 위 띠: 의도와 물음만. 목표는 세션 제목에 있다. 접기([-])는 엔진이 그린다
+  // 입력창 바로 위 띠: 의도 · 짐작 · 물음만. 목표는 세션 제목에 있다. 접기([-])는 엔진이 그린다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const list = await read($, requests)
@@ -263,16 +272,15 @@ export const register: Register = on => {
     if (!now) return next(e)
     const { Box, Text } = $.ui.resolve(e)
 
-    return intentTree({ Box, Text }, now.title, now.gap)
+    return intentTree({ Box, Text }, now)
   })
 
-  // /goal-pane 옆 패널: 목표와 지난 목표, 지금 의도와 지난 의도
+  // /goal-pane 옆 패널: 지금 의도와 지난 의도. 목표는 세션 제목에만 둔다
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const g = await read($, goalAtom)
     const list = await read($, requests)
     const now = list[list.length - 1]
-    if (!g && !now) {
+    if (!now) {
       return (
         <Box flexDirection="column">
           <Text bold>아직 없습니다</Text>
@@ -281,32 +289,11 @@ export const register: Register = on => {
       )
     }
 
-    const pastGoals = g ? [...g.history].reverse() : []
     const older = list.slice(0, -1).reverse().slice(0, 8)
 
     return (
       <Box flexDirection="column" gap={1}>
-        {g && (
-          <Box flexDirection="column">
-            <Text>
-              <Text size="caption" dimColor>
-                목표{'  '}
-              </Text>
-              <Text bold>{g.goal}</Text>
-            </Text>
-            {g.why.length > 0 && (
-              <Text size="caption" dimColor>
-                {kst(g.since)} 바뀐 까닭: {g.why}
-              </Text>
-            )}
-            {pastGoals.map(p => (
-              <Text size="caption" dimColor>
-                지난 목표 · {kst(p.since)} {p.goal}
-              </Text>
-            ))}
-          </Box>
-        )}
-        {now && intentTree({ Box, Text }, now.title, now.gap)}
+        {now && intentTree({ Box, Text }, now)}
         {older.length > 0 && (
           <Box flexDirection="column">
             <Text size="caption" dimColor>

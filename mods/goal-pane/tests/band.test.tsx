@@ -72,7 +72,7 @@ test('세션이 시작돼도 옆 패널을 저절로 열지 않는다', async ($
   expect(opened).toBe(0)
 })
 
-test('띠에는 의도와 물음만 보이고, 목표 · 들은 말 · 까닭은 보이지 않는다', async ($, on) => {
+test('띠에는 의도 · 짐작 · 물음만 보이고, 목표 · 들은 말 · 까닭은 보이지 않는다', async ($, on) => {
   engineDraws(on)
   memoryFiles(on)
   const empty = await $.ui.mount({ ...BAND, surface: 'desktop' })
@@ -80,12 +80,13 @@ test('띠에는 의도와 물음만 보이고, 목표 · 들은 말 · 까닭은
   await empty.unmount()
 
   await $.tool.call({ tool: TOOL_FULL, title: '첫 의도', original: '첫 말', reason: '첫 까닭', goal: 'AI가 의도를 정확히' })
-  await $.tool.call({ tool: TOOL_FULL, title: '둘째 의도', gap: '로그는 무엇인가요?', original: '로그 다 읽을 수 있나', reason: '로그를 git 기록으로 짐작함' })
+  await $.tool.call({ tool: TOOL_FULL, title: '둘째 의도', guess: ['로그는 git 기록일 것이다'], gap: '로그는 무엇인가요?', original: '로그 다 읽을 수 있나', reason: '로그를 git 기록으로 짐작함' })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect((await ui.find({ type: 'Text', text: /둘째 의도/ }))?.text).toContain('의도')
     expect((await ui.find({ type: 'Text', text: /물음/ }))?.text).toContain('로그는 무엇인가요?')
+    expect((await ui.find({ type: 'Text', text: /git 기록일 것이다/ }))?.text).toContain('AI 짐작')
     expect((await ui.find({ type: 'Text', text: /첫 의도/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /AI가 의도를 정확히/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /로그 다 읽을 수 있나/ }))?.text).toBe(undefined)
@@ -93,9 +94,10 @@ test('띠에는 의도와 물음만 보이고, 목표 · 들은 말 · 까닭은
     await ui.unmount()
   }
 
-  // 목표는 /goal-pane 패널에서는 보인다
+  // 목표는 세션 제목에만 둔다: 패널에도 없다
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await pane.find({ type: 'Text', text: /AI가 의도를 정확히/ }))?.text).toContain('목표')
+  expect((await pane.find({ type: 'Text', text: /둘째 의도/ }))?.text).toContain('의도')
+  expect((await pane.find({ type: 'Text', text: /AI가 의도를 정확히/ }))?.text).toBe(undefined)
   await pane.unmount()
 })
 
@@ -139,6 +141,17 @@ test('저장이 안 돼도 띠와 도구는 그대로 돈다', async ($, on) => 
   expect(JSON.stringify(r)).toContain('적었습니다')
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /의도만/ }))?.text).toContain('의도만')
+  await ui.unmount()
+})
+
+test('짐작과 물음이 없으면 그 줄은 생략된다', async ($, on) => {
+  engineDraws(on)
+  memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '깔끔한 의도', original: '말', reason: '까닭' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /깔끔한 의도/ }))?.text).toContain('의도')
+  expect((await ui.find({ type: 'Text', text: /짐작/ }))?.text).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /물음/ }))?.text).toBe(undefined)
   await ui.unmount()
 })
 
