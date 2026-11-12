@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 const TOOL_FULL = 'mcp__goal-pane__set_goal'
+const DIR = 'C:/Users/T/.claude/goal-pane'
 
 const BAND = {
   plugin: 'goal-pane',
@@ -16,6 +17,13 @@ const BAND = {
   },
 } as const
 
+const PANE = {
+  plugin: 'goal-pane',
+  component: 'Pane',
+  requestId: 'goal',
+  props: { title: '이해한 의도', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+} as const
+
 // 엔진 자리: 모드가 그리지 않으면 이 글자가 남는다
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function engineDraws(on: any) {
@@ -26,17 +34,27 @@ function engineDraws(on: any) {
   })
 }
 
-// 설정 훅 자리: 아무것도 바꾸지 않는다
+// 파일 자리: 쓴 것을 메모리에 모은다
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function noSettingsHooks(on: any) {
-  on('classic.UserPromptSubmit', () => ({}))
-}
+function memoryFiles(on: any, home: string | undefined = 'C:/Users/T') {
+  const files = new Map<string, string>()
+  on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'USERPROFILE' ? home : undefined }))
+  on('session.id', () => ({ value: 's1' }))
+  // 엔진은 경로를 운영체제 모양(윈도우는 \)으로 넘기므로 / 로 맞춰 둔다
+  const key = (p: string) => p.split(String.fromCharCode(92)).join('/')
+  on('fs.read', (_: unknown, e: { path: string }) => {
+    const v = files.get(key(e.path))
+    if (v === undefined) throw new Error('ENOENT')
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function submit($: any, title: string): Promise<string | undefined> {
-  const r = await $.classic.UserPromptSubmit({ prompt: '아무 말', session_title: title })
+    return { value: v }
+  })
+  on('fs.write', (_: unknown, e: { path: string; text: string }) => {
+    files.set(key(e.path), e.text)
 
-  return r.sessionTitle
+    return { value: undefined }
+  })
+
+  return files
 }
 
 test('세션이 시작돼도 옆 패널을 저절로 열지 않는다', async ($, on) => {
@@ -54,112 +72,80 @@ test('세션이 시작돼도 옆 패널을 저절로 열지 않는다', async ($
   expect(opened).toBe(0)
 })
 
-test('적어도 상태 줄과 알림은 쓰지 않는다', async ($, on) => {
-  let calls = 0
-  on('ui.status', () => {
-    calls += 1
-
-    return { value: undefined }
-  })
-  on('ui.toast', () => {
-    calls += 1
-
-    return { value: undefined }
-  })
-  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말1', goal: '목표1', label: '짧은1' })
-  await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말2', goal: '목표2', label: '짧은2', changed: true, why: '바뀜' })
-  expect(calls).toBe(0)
-})
-
-test('띠: 목표는 위에 굵게, 이번 요청의 의도와 물음은 그 아래, 목적 줄은 없다', async ($, on) => {
+test('띠에는 의도와 물음만 보이고, 목표 · 들은 말 · 까닭은 보이지 않는다', async ($, on) => {
   engineDraws(on)
+  memoryFiles(on)
   const empty = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await empty.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
   await empty.unmount()
 
-  await $.tool.call({ tool: TOOL_FULL, title: '첫 의도', original: '첫 말', goal: '모드를 다듬는다', label: '모드 다듬기' })
-  await $.tool.call({
-    tool: TOOL_FULL,
-    title: '둘째 의도',
-    gap: '로그는 무엇인가요?',
-    original: '로그 다 읽을 수 있나',
-  })
+  await $.tool.call({ tool: TOOL_FULL, title: '첫 의도', original: '첫 말', reason: '첫 까닭', goal: 'AI가 의도를 정확히' })
+  await $.tool.call({ tool: TOOL_FULL, title: '둘째 의도', gap: '로그는 무엇인가요?', original: '로그 다 읽을 수 있나', reason: '로그를 git 기록으로 짐작함' })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect((await ui.find({ type: 'Text', text: /모드를 다듬는다/ }))?.text).toContain('목표')
-    expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /둘째 의도/ }))?.text).toContain('의도')
-    expect((await ui.find({ type: 'Text', text: /첫 의도/ }))?.text).toBe(undefined)
-    // 목적 줄은 의도와 겹쳐 뺐다
-    expect((await ui.find({ type: 'Text', text: /목적/ }))?.text).toBe(undefined)
     expect((await ui.find({ type: 'Text', text: /물음/ }))?.text).toContain('로그는 무엇인가요?')
-    expect((await ui.find({ type: 'Text', text: /들은 말/ }))?.text).toContain('지난 요청 1건')
+    expect((await ui.find({ type: 'Text', text: /첫 의도/ }))?.text).toBe(undefined)
+    expect((await ui.find({ type: 'Text', text: /AI가 의도를 정확히/ }))?.text).toBe(undefined)
+    expect((await ui.find({ type: 'Text', text: /로그 다 읽을 수 있나/ }))?.text).toBe(undefined)
+    expect((await ui.find({ type: 'Text', text: /짐작함/ }))?.text).toBe(undefined)
     await ui.unmount()
   }
+
+  // 목표는 /goal-pane 패널에서는 보인다
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await pane.find({ type: 'Text', text: /AI가 의도를 정확히/ }))?.text).toContain('목표')
+  await pane.unmount()
 })
 
-test('목표는 changed 일 때만 바뀌고, 바뀌면 띠에 이전 목표와 까닭이 붙는다', async ($, on) => {
+test('왜 그렇게 이해했는지는 세션 파일에 한 줄씩 따로 쌓는다', async ($, on) => {
+  const files = memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말1', reason: '까닭1', goal: '목표1' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도2', gap: '물음2', original: '말2', reason: '까닭2' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도3', original: '말3', reason: '까닭3', goal: '목표2', changed: true, why: '사용자가 바꿈' })
+
+  const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
+  expect(lines.length).toBe(3)
+  expect(lines[0].kind).toBe('목표 정함')
+  expect(lines[0].reason).toBe('까닭1')
+  expect(lines[1].kind).toBe('의도')
+  expect(lines[1].original).toBe('말2')
+  expect(lines[1].gap).toBe('물음2')
+  expect(lines[2].kind).toBe('목표 바뀜')
+  expect(lines[2].previous).toBe('목표1')
+  expect(lines[2].why).toBe('사용자가 바꿈')
+})
+
+test('제목용 파일: 목표를 정하면 적고, 바뀌면 [바뀜] 단계로 두되 훅이 붙인 글은 지킨다', async ($, on) => {
+  const files = memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '[처음] 목표' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}')).toEqual({ goal: '처음 목표', flag: 'none', lastSuffix: '' })
+
+  // 설정 훅이 제목을 바꾼 뒤를 흉내 낸다
+  files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '처음 목표', flag: 'none', lastSuffix: ' [처음 목표]' }))
+  // changed 없는 다른 목표는 무시
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '슬쩍' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}').goal).toBe('처음 목표')
+
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '새 목표', changed: true, why: '바뀜' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}')).toEqual({ goal: '새 목표', flag: 'pending', lastSuffix: ' [처음 목표]' })
+})
+
+test('저장이 안 돼도 띠와 도구는 그대로 돈다', async ($, on) => {
   engineDraws(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말', goal: '처음 목표', label: '처음' })
-  // changed 없이 다른 목표를 적으면 무시한다: 요청마다 목표가 흔들리지 않게
-  await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말', goal: '슬쩍 바꾼 목표', label: '슬쩍' })
-  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /처음 목표/ }))?.text).toContain('처음 목표')
-  expect((await ui.find({ type: 'Text', text: /슬쩍 바꾼 목표/ }))?.text).toBe(undefined)
+  memoryFiles(on, undefined)
+  const r = await $.tool.call({ tool: TOOL_FULL, title: '의도만', original: '말', reason: '까닭', goal: '목표' })
+  expect(JSON.stringify(r)).toContain('적었습니다')
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /의도만/ }))?.text).toContain('의도만')
   await ui.unmount()
-
-  await $.tool.call({ tool: TOOL_FULL, title: '의도3', original: '말', goal: '새 목표', label: '새', changed: true, why: '사용자가 방향을 바꿈' })
-  ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /새 목표/ }))?.text).toContain('새 목표')
-  const changed = (await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text ?? ''
-  expect(changed).toContain('처음 목표')
-  expect(changed).toContain('사용자가 방향을 바꿈')
-  await ui.unmount()
-})
-
-test('제목: 앞은 그대로, 맨 뒤 대괄호만 모드가 바꾼다. 바뀐 뒤 첫 메시지에만 [바뀜]', async ($, on) => {
-  noSettingsHooks(on)
-  engineDraws(on)
-  // 목표가 없으면 제목을 건드리지 않는다
-  expect(await submit($, '모드 설치 및 설정')).toBe(undefined)
-
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표1', label: '의도 이해 실시간 표시' })
-  expect(await submit($, '모드 설치 및 설정')).toBe('모드 설치 및 설정 [의도 이해 실시간 표시]')
-  // 이미 맞으면 다시 쓰지 않는다
-  expect(await submit($, '모드 설치 및 설정 [의도 이해 실시간 표시]')).toBe(undefined)
-
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표2', label: '제목 규칙 정하기', changed: true, why: '바뀜' })
-  // 바뀐 직후 띠에는 바뀐 사실이 보인다
-  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toContain('목표1')
-  await ui.unmount()
-
-  expect(await submit($, '모드 설치 및 설정 [의도 이해 실시간 표시]')).toBe('모드 설치 및 설정 [바뀜] [제목 규칙 정하기]')
-  ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toContain('목표1')
-  await ui.unmount()
-
-  expect(await submit($, '모드 설치 및 설정 [바뀜] [제목 규칙 정하기]')).toBe('모드 설치 및 설정 [제목 규칙 정하기]')
-  ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /목표 바뀜/ }))?.text).toBe(undefined)
-  await ui.unmount()
-
-  // 사용자가 앞을 고치면 앞은 그대로 두고 뒤만 맞춘다
-  expect(await submit($, '새 이름 [제목 규칙 정하기]')).toBe(undefined)
-  // 사용자가 대괄호를 직접 고치면 그것도 사용자 것으로 두고 모드 것을 뒤에 붙인다
-  expect(await submit($, '새 이름 [내가 고침]')).toBe('새 이름 [내가 고침] [제목 규칙 정하기]')
-})
-
-test('짧은 목표에 대괄호가 들어오면 빼서 제목 규칙이 깨지지 않게 한다', async ($, on) => {
-  noSettingsHooks(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', goal: '목표', label: '[괄호] 목표' })
-  expect(await submit($, '제목')).toBe('제목 [괄호 목표]')
 })
 
 test('설문이 띠를 쓰는 동안에는 비켜 준다', async ($, on) => {
   engineDraws(on)
-  await $.tool.call({ tool: TOOL_FULL, title: '어떤 의도', original: '말', goal: '목표', label: '목표' })
+  memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '어떤 의도', original: '말', reason: '까닭', goal: '목표' })
 
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')

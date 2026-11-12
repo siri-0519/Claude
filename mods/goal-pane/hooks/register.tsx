@@ -1,30 +1,32 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
-import type { GoalState, RequestEntry } from '../types'
+import type { GoalState, RequestEntry, TitleState } from '../types'
 
 const PANE = 'goal'
-const TITLE = '목표와 이해한 의도'
+const TITLE = '이해한 의도'
 const TOOL = 'set_goal'
 const TOOL_FULL = 'mcp__goal-pane__set_goal'
 
 // 항목이 바뀌면 shape 꼬리표를 바꾼다: 앞 버전이 남긴 값을 받지 않게 한다
-const goalAtom = atom({ plugin: 'goal-pane', key: 'goal' } as const, null as GoalState | null, { shape: 'goal-1' })
-const requests = atom({ plugin: 'goal-pane', key: 'requests' } as const, [] as RequestEntry[], { shape: 'req-1' })
+const goalAtom = atom({ plugin: 'goal-pane', key: 'goal' } as const, null as GoalState | null, { shape: 'goal-2' })
+const requests = atom({ plugin: 'goal-pane', key: 'requests' } as const, [] as RequestEntry[], { shape: 'req-2' })
 
-// 모델이 읽는 지침: 무엇을 하라기보다 이 표시가 무엇을 위한 것인지를 먼저 말한다
+// 보여 주는 곳과 저장하는 곳을 나눈다(2026-11-12 사용자: 「판넬은 시각화 · 최적화용, 저장은 따로」).
+// 띠: 의도(AI가 사용자의 최근 요청을 어떻게 이해했나)와 물음. 목표: 세션 제목 맨 뒤 대괄호.
+// 근거가 된 말 · 그렇게 이해한 까닭: 화면에 내지 않고 세션마다 파일에 쌓는다
 const RULE = [
-  '이 세션에는 사용자가 보는 띠가 입력창 바로 위에 있고, 세션 제목 맨 뒤 대괄호에도 목표가 붙는다.',
-  '이것은 AI 에이전트가 사용자를 어떻게 이해하고 있는지 늘 보여 주어, 이해가 어긋나거나 사용자의 뜻이 바뀌었을 때 사용자가 바로 알아차리고 고칠 수 있게 하려는 것이다.',
-  '목표와 의도는 다르다. 목표는 사용자의 요청 하나하나가 결과적으로 무엇을 하기 위함인가이고, 자주 바뀌지 않는다. 의도는 이번 요청 하나로 사용자가 무엇을 원하는가이고, 메시지마다 다르다.',
-  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 이번 요청을 적는다: title(의도 한 문장), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로).`,
-  '목표(goal)와 짧은 목표(label, 20자 안팎)는 처음 한 번, 그리고 목표 자체가 바뀌었을 때만 적는다. 바뀌었으면 changed 를 true 로 하고 무엇이 왜 바뀌었는지(사용자의 어느 말 때문인지) why 에 적는다. 요청마다 의도가 달라지는 것은 목표가 바뀐 것이 아니다.',
+  '이 세션에는 사용자가 보는 띠가 입력창 바로 위에 있고, 세션 제목 맨 뒤 대괄호에 목표가 붙는다. AI 에이전트가 사용자를 어떻게 이해하고 있는지 늘 보여 주어, 이해가 어긋나거나 사용자의 뜻이 바뀌었을 때 사용자가 바로 알아차리고 고칠 수 있게 하려는 것이다.',
+  '의도는 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는가이고, 메시지마다 다르다. 목표는 사용자의 요청들이 궁극적으로 이루려는 것이고, 거의 바뀌지 않는다.',
+  `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 적는다: title(의도 한 문장), gap(사용자에게 물을 것), original(근거가 된 사용자의 말 그대로), reason(왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지, 짐작한 것이 있으면 무엇인지).`,
+  '띠에는 의도와 물음만 보인다. original 과 reason 은 화면에 나오지 않고 나중에 이해를 되짚기 위해 따로 저장된다.',
+  'goal 은 처음 한 번, 그리고 궁극적인 목표 자체가 바뀌었을 때만 적는다. 세션 제목 뒤에 붙으므로 20자 안팎으로 짧게 쓴다. 바뀌었으면 changed 를 true 로 하고 무엇이 왜 바뀌었는지(사용자의 어느 말 때문인지) why 에 적는다. 요청마다 의도가 달라지는 것은 목표가 바뀐 것이 아니다.',
   '사용자의 말을 부풀리지 않는다: 「할 수도 있다」를 「한다」로, 「그중 하나」를 「전부」로 바꾸지 않는다. gap 에 물음이 있으면 답을 받기 전에는 그 짐작대로 진행하지 않는다.',
   '세션 제목은 대괄호 앞은 사용자가, 맨 뒤 대괄호는 이 모드가 바꾼다. AI 에이전트는 제목을 직접 바꾸지 않는다.',
 ].join('\n')
 
 // 메시지마다 붙이는 짧은 지침
-const NUDGE = `목표 · 의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 이번 요청을 적는다. title = 의도(이번 요청으로 무엇을 원하나, 한 문장), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로. goal(목표: 요청들이 결과적으로 무엇을 하기 위함인가)과 label(짧은 목표, 20자 안팎)은 처음과 목표 자체가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
+const NUDGE = `의도 띠: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 적는다. title = 의도(AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나, 한 문장), gap = 사용자에게 물을 것(있으면 답 전에는 그 짐작대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로, reason = 왜 그렇게 이해했는지(어느 말 · 어떤 앞 맥락 때문인지, 짐작한 것). 띠에는 의도 · 물음만 보이고 original · reason 은 따로 저장된다. goal(사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎, 세션 제목 뒤에 붙음)은 처음과 궁극 목표가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
@@ -34,60 +36,43 @@ function strList(v: unknown): string[] {
   return Array.isArray(v) ? v.map(str).filter(s => s.length > 0).slice(0, 8) : []
 }
 
-// 짧은 목표가 없으면 목표 문장 앞부분으로 만든다. 대괄호는 제목 규칙을 깨므로 뺀다
-function makeLabel(label: string, goal: string): string {
-  const base = (label || goal).replace(/[[\]]/g, '').trim()
+// 제목 뒤 대괄호에 들어가므로 짧게, 대괄호는 빼서 제목 규칙이 깨지지 않게 한다
+function shortGoal(goal: string): string {
+  const base = goal.replace(/[[\]]/g, '').trim()
 
-  return base.length > 24 ? base.slice(0, 24) + '…' : base
+  return base.length > 30 ? base.slice(0, 30) + '…' : base
 }
 
-// 도구 입력에서 이번 요청을 SSoT 기록 한 건 형태로 옮긴다
+// 도구 입력에서 이번 요청을 옮긴다. 화면에는 title · gap 만 쓴다
 function toRequest(input: Record<string, unknown>, at: string): RequestEntry | null {
   const title = str(input.title)
   if (!title) return null
   const gapText = str(input.gap) || strList(input.asks).join(' / ')
 
   return {
-    kind: '요청',
-    source: '사용자',
     said_at: at,
     title,
-    ...(gapText ? { gap: { prompt: gapText } } : {}),
+    ...(gapText ? { gap: gapText } : {}),
     original: str(input.original),
+    reason: str(input.reason),
   }
 }
 
 // 목표를 처음 정하거나, 바뀌었을 때만 새 값을 만든다. 그 밖에는 null (그대로 둔다)
 function nextGoal(old: GoalState | null, input: Record<string, unknown>, at: string): GoalState | null {
-  const goal = str(input.goal)
-  if (!goal) return null
-  const label = makeLabel(str(input.label), goal)
-  if (!old) return { goal, label, since: at, n: 1, why: '', history: [], flag: 'none', lastSuffix: '' }
+  const raw = str(input.goal) || str(input.label)
+  if (!raw) return null
+  const goal = shortGoal(raw)
+  if (!old) return { goal, since: at, n: 1, why: '', history: [] }
   if (input.changed !== true || goal === old.goal) return null
 
   return {
-    ...old,
     goal,
-    label,
     since: at,
     n: old.n + 1,
     why: str(input.why),
-    history: [...old.history, { goal: old.goal, label: old.label, since: old.since, why: old.why }].slice(-20),
-    flag: 'pending',
+    history: [...old.history, { goal: old.goal, since: old.since, why: old.why }].slice(-20),
   }
-}
-
-// 제목 맨 뒤에 모드가 붙이는 글
-function suffixOf(g: GoalState): string {
-  return `${g.flag === 'pending' ? ' [바뀜]' : ''} [${g.label}]`
-}
-
-// 사용자가 지은 부분(앞)은 그대로 두고, 모드가 붙였던 맨 뒤 글만 갈아 끼운다.
-// 제목이 모드가 붙였던 글로 끝나지 않으면(사용자가 그 부분을 고쳤으면) 그 글은 사용자 것으로 둔다
-function retitle(current: string, g: GoalState): string {
-  const front = g.lastSuffix && current.endsWith(g.lastSuffix) ? current.slice(0, -g.lastSuffix.length) : current
-
-  return front.trimEnd() + suffixOf(g)
 }
 
 // 한국 시각 HH:MM
@@ -101,54 +86,61 @@ function kst(iso: string): string {
   return `${hh}:${mm}`
 }
 
-type Els = { Box: any; Text: any }
+// 내 사용자 폴더 아래 goal-pane 폴더. 윈도우와 맥 모두
+async function homeDir($: EngineInterface): Promise<string | undefined> {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
 
-// 목표 부분: 굵게. 바뀐 뒤 두 메시지 동안은 바뀐 사실을 노랗게 붙인다
-function goalTree({ Box, Text }: Els, g: GoalState) {
-  const prev = g.history[g.history.length - 1]
-  const isFresh = g.flag !== 'none' && prev !== undefined
-
-  return (
-    <Box flexDirection="column">
-      <Text>
-        <Text size="caption" dimColor>
-          목표{'  '}
-        </Text>
-        <Text bold>{g.goal}</Text>
-      </Text>
-      {isFresh && (
-        <Text color="warning">
-          {'      '}▲ {kst(g.since)} 목표 바뀜 · 이전 「{prev.goal}」{g.why ? ` · 까닭: ${g.why}` : ''}
-        </Text>
-      )}
-    </Box>
-  )
+  return home ? `${home.replace(/\\/g, '/')}/.claude/goal-pane` : undefined
 }
 
-// 요청 부분: 사용자가 몰라도 되는 칸은 작고 흐리게
-function requestTree({ Box, Text }: Els, r: RequestEntry, foot: string) {
-  const meta = [r.kind, '사용자가 말함', kst(r.said_at)].filter(Boolean).join(' · ')
-  const tail = [r.original ? `들은 말 「${r.original.replace(/^「|」$/g, '')}」` : '', foot].filter(Boolean).join(' · ')
+// 이해한 까닭을 세션마다 파일 한 줄씩 쌓는다. 실패해도 띠와 답은 그대로 간다
+async function keep($: EngineInterface, line: Record<string, unknown>): Promise<void> {
+  const dir = await homeDir($)
+  if (!dir) return
+  const id = await $.session.id()
+  const path = `${dir}/기록/${id}.jsonl`
+  const before = await $.fs.read(path).catch(() => '')
+  await $.fs.write(path, `${typeof before === 'string' ? before : ''}${JSON.stringify(line)}\n`)
+}
 
+// 세션 제목은 설정 훅(title-hook.mjs)이 바꾼다: 이 앱에서는 모드의 제목 훅이 다른 플러그인에 막혀 돌지 않는다(2026-11-12).
+// 모드는 목표와 「[바뀜]」 단계를 세션 파일에 적기만 한다. 훅이 마지막으로 붙인 글(lastSuffix)은 지키며 고친다
+async function markTitle($: EngineInterface, goal: string, isChange: boolean): Promise<void> {
+  const dir = await homeDir($)
+  if (!dir) return
+  const id = await $.session.id()
+  const path = `${dir}/제목/${id}.json`
+  const raw = await $.fs.read(path).catch(() => '')
+  let old: Partial<TitleState> = {}
+  try {
+    old = typeof raw === 'string' && raw ? (JSON.parse(raw) as Partial<TitleState>) : {}
+  } catch {
+    old = {}
+  }
+  const next: TitleState = { goal, flag: isChange ? 'pending' : old.flag ?? 'none', lastSuffix: old.lastSuffix ?? '' }
+  await $.fs.write(path, JSON.stringify(next))
+}
+
+type Els = { Box: any; Text: any }
+
+// 띠 · 카드 · 패널이 같이 쓰는 의도와 물음
+function intentTree({ Box, Text }: Els, title: string, gap: string | undefined) {
   return (
     <Box flexDirection="column">
       <Text>
         <Text size="caption" dimColor>
           의도{'  '}
         </Text>
-        <Text>{r.title}</Text>
+        <Text>{title}</Text>
       </Text>
-      {r.gap && (
+      {gap && (
         <Text color="warning">
           <Text bold color="warning">
             물음{'  '}
           </Text>
-          {r.gap.prompt}
+          {gap}
         </Text>
       )}
-      <Text size="caption" dimColor>
-        {[meta, tail].filter(Boolean).join(' · ')}
-      </Text>
     </Box>
   )
 }
@@ -158,25 +150,25 @@ export const register: Register = on => {
     await $.tool.register({
       name: TOOL,
       description:
-        '사용자가 보는 띠에, AI 에이전트가 이번 요청을 어떻게 이해했는지(의도 · 물음 · 들은 말)를 적는다. 이 대화의 목표는 처음과 목표가 바뀔 때만 함께 적는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
+        '사용자가 보는 띠에 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지(의도)와 물을 것을 적고, 왜 그렇게 이해했는지(근거가 된 말 · 까닭)는 따로 저장한다. 궁극 목표는 처음과 바뀔 때만 적고, 세션 제목 맨 뒤 대괄호에 붙는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
       inputSchema: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: '의도: 이번 요청으로 사용자가 무엇을 원하는지 한 문장. 사용자의 말을 부풀리지 않는다.' },
+          title: { type: 'string', description: '의도: AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지 한 문장. 사용자의 말을 부풀리지 않는다.' },
           gap: { type: 'string', description: '확인하지 못해 사용자에게 물어야 할 것. 없으면 비운다.' },
-          original: { type: 'string', description: '이번 이해의 근거가 된 사용자의 말. 짧게, 그대로 옮긴다.' },
-          goal: { type: 'string', description: '목표: 사용자의 요청들이 결과적으로 무엇을 하기 위함인가. 처음 한 번과 목표 자체가 바뀔 때만 적는다.' },
-          label: { type: 'string', description: '세션 제목 뒤 대괄호에 붙일 짧은 목표, 20자 안팎. goal 을 적을 때 함께 적는다.' },
-          changed: { type: 'boolean', description: '목표 자체가 바뀌었으면 true. 요청마다 의도가 다른 것은 바뀐 것이 아니다.' },
+          original: { type: 'string', description: '이번 이해의 근거가 된 사용자의 말. 짧게, 그대로 옮긴다. 화면에는 나오지 않고 저장된다.' },
+          reason: { type: 'string', description: '왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지, 짐작한 것이 있으면 무엇인지. 화면에는 나오지 않고 저장된다.' },
+          goal: { type: 'string', description: '목표: 사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎. 세션 제목 뒤 대괄호에 붙는다. 처음 한 번과 궁극 목표가 바뀔 때만 적는다.' },
+          changed: { type: 'boolean', description: '궁극 목표 자체가 바뀌었으면 true. 요청마다 의도가 다른 것은 바뀐 것이 아니다.' },
           why: { type: 'string', description: '목표가 바뀌었다면 무엇이 왜 바뀌었는지, 사용자의 어느 말 때문인지' },
         },
-        required: ['title', 'original'],
+        required: ['title', 'original', 'reason'],
       },
       isDeferred: false,
     })
     // 명령 등록이 거절돼도 도구와 띠는 살아 있게 한다.
     // 옆 패널은 채팅 칸을 좁히므로 저절로 열지 않고, /goal-pane 을 입력할 때만 연다
-    await $.command.register({ name: 'goal-pane', description: `「${TITLE}」 옆 패널을 연다` }).catch(() => undefined)
+    await $.command.register({ name: 'goal-pane', description: '목표와 지난 의도를 옆 패널에 연다' }).catch(() => undefined)
 
     return next(e)
   })
@@ -190,11 +182,11 @@ export const register: Register = on => {
     return {
       text: opened.isPlaced
         ? `「${TITLE}」 패널이 그려졌습니다. (${where})`
-        : `패널을 열었지만 이 화면에는 그려지지 않았습니다. 까닭: ${opened.reason} (${where}) 목표와 의도는 입력창 위 띠와 대화 안의 도구 줄 아래 카드로도 보입니다.`,
+        : `패널을 열었지만 이 화면에는 그려지지 않았습니다. 까닭: ${opened.reason} (${where}) 의도는 입력창 위 띠와 대화 안의 도구 줄 아래 카드로도 보입니다.`,
     }
   }).catch(() => ({ text: '패널을 열지 못했습니다.' }))
 
-  // 대화 안에서도 보이도록, 적는 도구 줄 아래에 이번에 적은 것을 카드로 그린다
+  // 대화 안에서도 보이도록, 적는 도구 줄 아래에 이번에 적은 의도 · 물음(목표를 바꿨으면 그것도)을 카드로 그린다
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     if (e.props.tool !== TOOL_FULL) return next(e)
     const { Box, Text } = $.ui.resolve(e)
@@ -208,14 +200,11 @@ export const register: Register = on => {
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
         {row}
         {goal && (
-          <Text>
-            <Text size="caption" dimColor>
-              {input.changed === true ? '목표 바뀜  ' : '목표  '}
-            </Text>
-            <Text bold>{goal}</Text>
+          <Text size="caption" dimColor>
+            {input.changed === true ? '목표 바뀜' : '목표'} [{shortGoal(goal)}]
           </Text>
         )}
-        {req && requestTree({ Box, Text }, req, '')}
+        {req && intentTree({ Box, Text }, req.title, req.gap)}
       </Box>
     )
   })
@@ -232,23 +221,6 @@ export const register: Register = on => {
     e.command || e.isMeta ? next(e) : next({ ...e, context: [...(e.context ?? []), NUDGE] }),
   )
 
-  // 세션 제목: 앞은 사용자 몫, 맨 뒤 대괄호는 모드 몫. 엔진이 제목을 바꾸게 해 주는 때는 메시지가 들어올 때뿐이라 여기서 한다.
-  // 목표가 바뀐 뒤 첫 메시지에 「[바뀜]」을 붙이고, 그다음 메시지에 뗀다
-  on('classic.UserPromptSubmit', async ($, e, next) => {
-    const result = await next(e)
-    const current = typeof e.session_title === 'string' ? e.session_title : ''
-    const g = await read($, goalAtom)
-    if (!g || !current) return result
-
-    const title = retitle(current, g)
-    const suffix = suffixOf(g)
-    await update($, goalAtom, (old): GoalState | null =>
-      old ? { ...old, lastSuffix: suffix, flag: old.flag === 'pending' ? 'shown' : 'none' } : old,
-    )
-
-    return title === current ? result : { ...result, sessionTitle: title }
-  }).catch(($, e, next) => next(e))
-
   // 상태 줄과 알림은 쓰지 않는다: 상태 줄은 글이 잘리고, 알림은 쌓여서 보지 않게 된다(2026-11-12 사용자)
   on('tool.call', { tool: TOOL_FULL }, async ($, e) => {
     const input = e as unknown as Record<string, unknown>
@@ -256,43 +228,45 @@ export const register: Register = on => {
     const req = toRequest(input, at)
     const old = await read($, goalAtom)
     const goal = nextGoal(old, input, at)
-    if (!req && !goal && !old) {
-      return { deny: '이번 요청의 의도(title)와, 처음이라면 이 대화의 목표(goal)를 적어 주세요.' }
-    }
-    if (!req && !goal) return { deny: '이번 요청의 의도(title)를 한 문장으로 적어 주세요.' }
+    if (!req && !goal) return { deny: '이번 요청을 어떻게 이해했는지(title)를 한 문장으로 적어 주세요.' }
 
     if (goal) await update($, goalAtom, () => goal)
     const list = req ? await update($, requests, l => [...l, req].slice(-50)) : await read($, requests)
-
     const now = goal ?? old
+
+    // 저장: 화면에 내지 않는 근거와 까닭까지 한 줄로. 제목용 파일은 목표가 정해지거나 바뀔 때만
+    const problems: string[] = []
+    await keep($, {
+      at,
+      kind: goal ? (goal.n === 1 ? '목표 정함' : '목표 바뀜') : '의도',
+      goal: now?.goal ?? '',
+      ...(goal && goal.n > 1 ? { previous: old?.goal ?? '', why: goal.why } : {}),
+      ...(req ? { intent: req.title, gap: req.gap ?? '', original: req.original, reason: req.reason } : {}),
+    }).catch(() => problems.push('이해한 까닭을 저장하지 못했습니다.'))
+    if (goal) await markTitle($, goal.goal, goal.n > 1).catch(() => problems.push('제목용 목표를 적지 못했습니다.'))
+
     const goalNote = goal ? (goal.n === 1 ? ' 목표를 정했습니다.' : ` 목표가 바뀌었습니다(${goal.n}번째 목표).`) : ''
     const attached = await $.session.surfaces().catch(() => [] as readonly string[])
 
     return {
-      result: `적었습니다 (요청 ${list.length}번째).${goalNote}${now ? '' : ' 아직 목표가 없습니다: 다음에 goal 과 label 을 함께 적어 주세요.'} 연결된 화면: ${attached.length > 0 ? attached.join(', ') : '없음'}.`,
+      result: `적었습니다 (의도 ${list.length}번째).${goalNote}${problems.length ? ' ' + problems.join(' ') : ''}${now ? '' : ' 아직 목표가 없습니다: 다음에 goal 을 함께 적어 주세요.'} 연결된 화면: ${attached.length > 0 ? attached.join(', ') : '없음'}.`,
     }
   }).catch(($, e, next) =>
     next.called ? next(e) : { deny: 'goal-pane: 저장하지 못했습니다. 답은 계속 써도 됩니다.' },
   )
 
-  // 입력창 바로 위 띠: 가로 폭을 더 쓰지 않고 목표와 이번 의도를 보인다. 접기([-])는 엔진이 그린다
+  // 입력창 바로 위 띠: 의도와 물음만. 목표는 세션 제목에 있다. 접기([-])는 엔진이 그린다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const g = await read($, goalAtom)
     const list = await read($, requests)
     const now = list[list.length - 1]
-    if (!g && !now) return next(e)
+    if (!now) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const older = list.length - 1
 
-    return (
-      <Box flexDirection="column">
-        {g && goalTree({ Box, Text }, g)}
-        {now && requestTree({ Box, Text }, now, older > 0 ? `지난 요청 ${older}건은 /goal-pane` : '')}
-      </Box>
-    )
+    return intentTree({ Box, Text }, now.title, now.gap)
   })
 
+  // /goal-pane 옆 패널: 목표와 지난 목표, 지금 의도와 지난 의도
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const g = await read($, goalAtom)
@@ -302,7 +276,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Text bold>아직 없습니다</Text>
-          <Text dimColor>메시지를 보내면, AI 에이전트가 이해한 목표와 의도가 여기에 뜹니다.</Text>
+          <Text dimColor>메시지를 보내면, AI 에이전트가 이해한 의도가 여기에 뜹니다.</Text>
         </Box>
       )
     }
@@ -312,24 +286,31 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {g && goalTree({ Box, Text }, g)}
-        {pastGoals.length > 0 && (
+        {g && (
           <Box flexDirection="column">
-            <Text size="caption" dimColor>
-              지난 목표 (최근 것부터)
+            <Text>
+              <Text size="caption" dimColor>
+                목표{'  '}
+              </Text>
+              <Text bold>{g.goal}</Text>
             </Text>
+            {g.why.length > 0 && (
+              <Text size="caption" dimColor>
+                {kst(g.since)} 바뀐 까닭: {g.why}
+              </Text>
+            )}
             {pastGoals.map(p => (
               <Text size="caption" dimColor>
-                {kst(p.since)} {p.goal}
+                지난 목표 · {kst(p.since)} {p.goal}
               </Text>
             ))}
           </Box>
         )}
-        {now && requestTree({ Box, Text }, now, '')}
+        {now && intentTree({ Box, Text }, now.title, now.gap)}
         {older.length > 0 && (
           <Box flexDirection="column">
             <Text size="caption" dimColor>
-              지난 요청 (최근 것부터)
+              지난 의도 (최근 것부터)
             </Text>
             {older.map(r => (
               <Text size="caption" dimColor>
