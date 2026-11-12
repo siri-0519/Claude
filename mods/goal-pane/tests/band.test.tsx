@@ -174,3 +174,92 @@ test('설문이 입력창 위 영역을 쓰는 동안에는 비켜 준다', asyn
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
   await ui.unmount()
 })
+
+test('가정마다 ✗가 있고, 누르면 틀림(빨간 취소선)으로 바뀌고 다시 누르면 풀린다', async ($, on) => {
+  engineDraws(on)
+  memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '두 가정 의도', assumptions: ['첫 가정', '둘째 가정'], original: '말', reason: '까닭' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(2)
+  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+
+  await ui.press({ key: 'wrong-1' })
+  const struck = await ui.find({ type: 'Text', text: /^둘째 가정$/ })
+  expect(struck?.props.strikethrough).toBe(true)
+  expect(struck?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: /^첫 가정$/ }))?.props.strikethrough).toBe(false)
+  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toContain('1개')
+
+  await ui.press({ key: 'wrong-1' })
+  expect((await ui.find({ type: 'Text', text: /^둘째 가정$/ }))?.props.strikethrough).toBe(false)
+  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  await ui.unmount()
+})
+
+test('표시한 가정은 다음 메시지에 함께 실려 가고, 기록에 남고, 표시는 지워진다', async ($, on) => {
+  engineDraws(on)
+  const files = memoryFiles(on)
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.tool.call({ tool: TOOL_FULL, title: '세 가정 의도', assumptions: ['가정A', '가정B', '가정C'], original: '말', reason: '까닭' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.press({ key: 'wrong-0' })
+  await ui.press({ key: 'wrong-2' })
+
+  await $.prompt.submit({ text: '다음 말', wait: false, origin: { kind: 'composer' } })
+  const note = seen.find(c => c.includes('틀렸다고 표시한'))
+  expect(note).toContain('가정A')
+  expect(note).toContain('가정C')
+  expect(note).not.toContain('가정B')
+  expect(seen.some(c => c.includes('mcp__goal-pane__set_goal'))).toBe(true)
+
+  const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
+  expect(lines[lines.length - 1].kind).toBe('틀린 가정')
+  expect(lines[lines.length - 1].wrong).toEqual(['가정A', '가정C'])
+
+  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  await $.prompt.submit({ text: '그다음 말', wait: false, origin: { kind: 'composer' } })
+  expect(seen.some(c => c.includes('틀렸다고 표시한'))).toBe(false)
+  await ui.unmount()
+})
+
+test('새 의도가 오면 앞 의도에 남은 표시는 따라오지 않는다', async ($, on) => {
+  engineDraws(on)
+  memoryFiles(on)
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.tool.call({ tool: TOOL_FULL, title: '앞 의도', assumptions: ['앞 가정'], original: '말', reason: '까닭' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.press({ key: 'wrong-0' })
+  await ui.unmount()
+
+  await $.tool.call({ tool: TOOL_FULL, title: '새 의도', assumptions: ['새 가정'], original: '말', reason: '까닭' })
+  const ui2 = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui2.find({ type: 'Text', text: /^새 가정$/ }))?.props.strikethrough).toBe(false)
+  expect((await ui2.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  await ui2.unmount()
+  await $.prompt.submit({ text: '말', wait: false, origin: { kind: 'composer' } })
+  expect(seen.some(c => c.includes('틀렸다고 표시한'))).toBe(false)
+})
+
+test('앱을 다시 켜 세션 상태가 비어도, 파일에 남은 앞 목표와 다르면 [바뀜] 단계로 둔다', async ($, on) => {
+  const files = memoryFiles(on)
+  files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '앞 목표', flag: 'none', lastSuffix: ' [앞 목표]' }))
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '새 목표', changed: true, why: '바뀜' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}')).toEqual({ goal: '새 목표', flag: 'pending', lastSuffix: ' [앞 목표]' })
+
+  // 같은 목표를 다시 적으면 단계는 그대로
+  files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '새 목표', flag: 'none', lastSuffix: ' [새 목표]' }))
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', goal: '새 목표', changed: true, why: '같음' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}').flag).toBe('none')
+})

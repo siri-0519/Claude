@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { GoalState, RequestEntry, TitleState } from '../types'
+import type { GoalState, RequestEntry, TitleState, WrongMarks } from '../types'
 
 const PANE = 'goal'
 const TITLE = '이해한 의도'
@@ -11,6 +11,11 @@ const TOOL_FULL = 'mcp__goal-pane__set_goal'
 // 항목이 바뀌면 shape 꼬리표를 바꾼다: 앞 버전이 남긴 값을 받지 않게 한다
 const goalAtom = atom({ plugin: 'goal-pane', key: 'goal' } as const, null as GoalState | null, { shape: 'goal-2' })
 const requests = atom({ plugin: 'goal-pane', key: 'requests' } as const, [] as RequestEntry[], { shape: 'req-3' })
+// 사용자가 ✗로 틀렸다고 표시한 가정. 그 의도(said_at)에만 붙고, 다음 메시지에 실려 가면 지운다
+const wrongAtom = atom({ plugin: 'goal-pane', key: 'wrong' } as const, null as WrongMarks | null, { shape: 'wrong-1' })
+
+// 사람이 보낸 메시지에만 틀린 가정을 싣는다. 알림 · 예약 작업 · 다른 세션 · 플러그인이 보낸 것에 실으면 표시가 엉뚱한 데로 새고 지워진다
+const MACHINE_ORIGINS = new Set(['task-notification', 'scheduled-trigger', 'peer', 'peer-send-message', 'projects-relay', 'channel', 'coordinator', 'plugin'])
 
 // 보여 주는 곳과 저장하는 곳을 나눈다(2026-11-12 사용자: 「판넬은 시각화 · 최적화용, 저장은 따로」).
 // 입력창 위 영역: 의도(AI가 사용자의 최근 요청을 어떻게 이해했나) · 가정 · 확인 질문(가정 · 확인 질문은 있을 때만).
@@ -126,14 +131,31 @@ async function markTitle($: EngineInterface, goal: string, isChange: boolean): P
   } catch {
     old = {}
   }
-  const next: TitleState = { goal, flag: isChange ? 'pending' : old.flag ?? 'none', lastSuffix: old.lastSuffix ?? '' }
+  // 앱을 다시 켜면 세션 상태가 비어 바뀐 목표도 「처음 정함」으로 온다. 그래서 파일에 남은 앞 목표와도 견준다
+  const changed = isChange || (typeof old.goal === 'string' && old.goal !== '' && old.goal !== goal)
+  const next: TitleState = { goal, flag: changed ? 'pending' : old.flag ?? 'none', lastSuffix: old.lastSuffix ?? '' }
   await $.fs.write(path, JSON.stringify(next))
 }
 
-type Els = { Box: any; Text: any }
+// ✗를 누를 때마다 그 가정의 표시를 켜고 끈다. 다른 의도에 남은 표시는 버린다
+function toggleMark(old: WrongMarks | null, saidAt: string, i: number): WrongMarks | null {
+  const marks = old && old.said_at === saidAt ? old.marks : []
+  const nextMarks = marks.includes(i) ? marks.filter(m => m !== i) : [...marks, i].sort((a, b) => a - b)
 
-// 입력창 위 영역 · 카드 · 패널이 같이 쓰는 의도 · 가정 · 확인 질문. 가정과 확인 질문은 있을 때만 줄이 생긴다
-function intentTree({ Box, Text }: Els, r: Pick<RequestEntry, 'title' | 'assumptions' | 'question'>) {
+  return nextMarks.length ? { said_at: saidAt, marks: nextMarks } : null
+}
+
+// 지금 의도에 붙은 표시만 쓴다
+function marksFor(w: WrongMarks | null, r: RequestEntry | undefined): number[] {
+  return w && r && w.said_at === r.said_at ? w.marks.filter(i => i >= 0 && i < (r.assumptions ?? []).length) : []
+}
+
+type Els = { Box: any; Text: any; Button?: any }
+type Marking = { wrong: number[]; toggle?: (i: number) => void }
+
+// 입력창 위 영역 · 카드 · 패널이 같이 쓰는 의도 · 가정 · 확인 질문. 가정과 확인 질문은 있을 때만 줄이 생긴다.
+// 입력창 위 영역에서는 가정 줄마다 오른쪽 끝에 ✗가 서고(줄 양끝 정렬이라 글 길이와 상관없이 세로로 맞는다), 누르면 그 가정이 빨간 취소선으로 바뀐다
+function intentTree({ Box, Text, Button }: Els, r: Pick<RequestEntry, 'title' | 'assumptions' | 'question'>, m: Marking = { wrong: [] }) {
   return (
     <Box flexDirection="column">
       <Text>
@@ -142,17 +164,43 @@ function intentTree({ Box, Text }: Els, r: Pick<RequestEntry, 'title' | 'assumpt
         </Text>
         <Text>{r.title}</Text>
       </Text>
-      {(r.assumptions ?? []).map(a => (
-        <Text color="warning">
-          <Text size="caption" color="warning">
-            가정{'  '}
-          </Text>
-          {a}
-          <Text size="caption" color="warning">
-            {'  '}확인 필요
-          </Text>
+      {(r.assumptions ?? []).map((a, i) => {
+        const isWrong = m.wrong.includes(i)
+        const tone = isWrong ? 'error' : 'warning'
+
+        return (
+          <Box flexDirection="row" justifyContent="space-between" width="100%">
+            <Box flexShrink={1}>
+              <Text color={tone}>
+                <Text size="caption" color={tone}>
+                  가정{'  '}
+                </Text>
+                <Text color={tone} strikethrough={isWrong}>
+                  {a}
+                </Text>
+                <Text size="caption" color={tone}>
+                  {'  '}
+                  {isWrong ? '틀림' : '확인 필요'}
+                </Text>
+              </Text>
+            </Box>
+            {Button && m.toggle && (
+              <Box marginLeft={1}>
+                <Button key={`wrong-${i}`} plain onPress={() => m.toggle?.(i)}>
+                  <Text color="error" bold={isWrong}>
+                    ✗
+                  </Text>
+                </Button>
+              </Box>
+            )}
+          </Box>
+        )
+      })}
+      {m.toggle && m.wrong.length > 0 && (
+        <Text size="caption" color="error">
+          틀린 가정 {m.wrong.length}개 → 다음 메시지에 함께 보냅니다
         </Text>
-      ))}
+      )}
       {r.question && (
         <Text color="warning">
           <Text bold color="warning">
@@ -231,9 +279,27 @@ export const register: Register = on => {
 
   // 다른 플러그인이 시스템 프롬프트 단계를 먼저 처리해 위 지침이 빠질 수 있다.
   // 그래서 사용자 메시지마다 짧은 지침을 함께 붙인다 (사용자에게는 보이지 않는다)
-  on('prompt.submit', ($, e, next) =>
-    e.command || e.isMeta ? next(e) : next({ ...e, context: [...(e.context ?? []), NUDGE] }),
-  )
+  // ✗로 표시한 가정은 바로 보내지 않고(가정이 여럿일 수 있고, 잘못 누르면 풀 수 있게) 사용자의 다음 메시지에 함께 싣는다(2026-11-12 사용자)
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta) return next(e)
+    const list = await read($, requests)
+    const now = list[list.length - 1]
+    const fromPerson = !e.origin || !MACHINE_ORIGINS.has(e.origin.kind)
+    const wrong = fromPerson && now ? marksFor(await read($, wrongAtom), now).map(i => (now.assumptions ?? [])[i] ?? '') : []
+    const extra = wrong.length
+      ? [
+          `사용자가 입력창 위 영역에서, 앞 의도(「${now?.title ?? ''}」)의 가정 가운데 틀렸다고 표시한 것: ${wrong.map((w, i) => `${i + 1}) ${w}`).join(' ')}. 이 가정대로 진행하지 말고, 이번 메시지와 함께 바로잡아 반영한다.`,
+        ]
+      : []
+
+    const r = await next({ ...e, context: [...(e.context ?? []), ...extra, NUDGE] })
+    if (wrong.length && !r.drop) {
+      await update($, wrongAtom, () => null)
+      await keep($, { at: new Date().toISOString(), kind: '틀린 가정', intent: now?.title ?? '', wrong }).catch(() => undefined)
+    }
+
+    return r
+  })
 
   // 상태 줄과 알림은 쓰지 않는다: 상태 줄은 글이 잘리고, 알림은 쌓여서 보지 않게 된다(2026-11-12 사용자)
   on('tool.call', { tool: TOOL_FULL }, async ($, e) => {
@@ -277,9 +343,13 @@ export const register: Register = on => {
     const list = await read($, requests)
     const now = list[list.length - 1]
     if (!now) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const wrong = marksFor(await read($, wrongAtom), now)
+    const toggle = (i: number) => {
+      void update($, wrongAtom, old => toggleMark(old, now.said_at, i))
+    }
 
-    return intentTree({ Box, Text }, now)
+    return intentTree({ Box, Text, Button }, now, { wrong, toggle })
   })
 
   // /goal-pane 옆 패널: 지금 의도와 지난 의도. 목표는 세션 제목에만 둔다
@@ -297,10 +367,11 @@ export const register: Register = on => {
     }
 
     const older = list.slice(0, -1).reverse().slice(0, 8)
+    const wrong = marksFor(await read($, wrongAtom), now)
 
     return (
       <Box flexDirection="column" gap={1}>
-        {intentTree({ Box, Text }, now)}
+        {intentTree({ Box, Text }, now, { wrong })}
         {older.length > 0 && (
           <Box flexDirection="column">
             <Text size="caption" dimColor>

@@ -49,8 +49,18 @@ export type RequestEntry = {
   reason: string
 }
 
+/**
+ * 사용자가 입력창 위 영역의 ✗로 틀렸다고 표시한 가정. 그 의도에만 붙고, 사용자의 다음 메시지에 실려 가면 지운다
+ */
+export type WrongMarks = {
+  /** 어느 의도의 가정인가: 그 의도의 said_at */
+  said_at: string
+  /** 틀렸다고 표시한 가정의 순번(0부터) */
+  marks: number[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'goal-pane': { goal: Shaped<GoalState | null>; requests: Shaped<RequestEntry[]> }
+    'goal-pane': { goal: Shaped<GoalState | null>; requests: Shaped<RequestEntry[]>; wrong: Shaped<WrongMarks | null> }
   }
 }
