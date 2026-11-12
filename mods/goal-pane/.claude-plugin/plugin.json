@@ -1,6 +1,6 @@
 {
   "name": "goal-pane",
-  "version": "0.3.0",
-  "description": "사용자가 말할 때마다 AI 에이전트가 이해한 의도와 목적을 SSoT 기록 한 건의 형태로 입력창 위 띠에 보여 주고, /goal-pane 으로 지난 이해를 옆 패널에 연다",
+  "version": "0.4.0",
+  "description": "대화의 목표(자주 안 바뀜)를 세션 제목 맨 뒤 대괄호와 입력창 위 띠에, 요청마다 AI 에이전트가 이해한 의도 · 목적 · 짐작 · 물음을 그 아래에 보여 준다. /goal-pane 으로 지난 목표와 요청을 옆 패널에 연다",
   "types": "./types/index.d.ts"
 }
