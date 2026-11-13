@@ -311,7 +311,7 @@ export const register: Register = on => {
     const right = text(marked.right)
     const wrong = text(marked.wrong)
     // 번호 · 개수 없이 가정 글만 「」로 묶는다. 무엇이 맞고 틀렸는지만 필요하다(2026-11-13 사용자)
-    const quoted = (xs: string[]) => `${xs.length}개: ${xs.map(x => `「${x}」`).join(', ')}`
+    const quoted = (xs: string[]) => xs.map(x => `「${x}」`).join(', ')
     const parts = [
       right.length ? `맞다고 확정한 가정: ${quoted(right)}. 사용자가 확정했으니 다시 묻지 말고 그대로 진행한다.` : '',
       wrong.length ? `틀렸다고 표시한 가정: ${quoted(wrong)}. 이 가정대로 진행하지 말고, 이번 메시지와 함께 바로잡아 반영한다.` : '',
