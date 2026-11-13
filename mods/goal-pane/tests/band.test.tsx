@@ -311,3 +311,68 @@ test('✓를 누르면 초록 「확정」이 되고, ✗와 둘 중 하나만 �
   expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
   await ui.unmount()
 })
+
+test('fit 이 부합 · 곁가지면 goal 이 와도 목표는 그대로이고, 확장 · 변경이면 바뀌어 기록에 판단이 남는다', async ($, on) => {
+  const files = memoryFiles(on)
+  const title = () => JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}')
+  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말', reason: '까닭', fit: '처음', goal: '목표A' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말', reason: '까닭', fit: '부합', goal: '슬쩍B' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도3', original: '말', reason: '까닭', fit: '곁가지', goal: '슬쩍C' })
+  expect(title().goal).toBe('목표A')
+
+  await $.tool.call({ tool: TOOL_FULL, title: '의도4', original: '말', reason: '까닭', fit: '확장', goal: '목표A+', why: '넓어짐' })
+  expect(title()).toEqual({ goal: '목표A+', flag: 'pending', lastSuffix: '' })
+  await $.tool.call({ tool: TOOL_FULL, title: '의도5', original: '말', reason: '까닭', fit: '변경', goal: '목표Z', why: '바뀜' })
+  expect(title().goal).toBe('목표Z')
+
+  const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
+  expect(lines.map(l => l.fit)).toEqual(['처음', '부합', '곁가지', '확장', '변경'])
+  expect(lines.map(l => l.kind)).toEqual(['목표 정함', '의도', '의도', '목표 바뀜', '목표 바뀜'])
+  expect(lines[3].previous).toBe('목표A')
+  expect(lines[4].why).toBe('바뀜')
+})
+
+test('확장 · 변경으로 판단했는데 새 목표가 없거나 같으면 다시 부르게 하고, 아무것도 적지 않는다', async ($, on) => {
+  const files = memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '의도1', original: '말', reason: '까닭', fit: '처음', goal: '목표A' })
+  const none = await $.tool.call({ tool: TOOL_FULL, title: '의도2', original: '말', reason: '까닭', fit: '확장' })
+  expect(JSON.stringify(none)).toContain('다시 불러')
+  const same = await $.tool.call({ tool: TOOL_FULL, title: '의도3', original: '말', reason: '까닭', fit: '변경', goal: '목표A' })
+  expect(JSON.stringify(same)).toContain('목표A')
+  expect((files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n')).toHaveLength(1)
+})
+
+test('곁가지로 본 요청은 입력창 위 영역에 곁가지 줄이 보이고, 부합은 줄이 생기지 않는다', async ($, on) => {
+  engineDraws(on)
+  memoryFiles(on)
+  await $.tool.call({ tool: TOOL_FULL, title: '본 일', original: '말', reason: '까닭', fit: '처음', goal: '목표A' })
+  await $.tool.call({ tool: TOOL_FULL, title: '맞는 일', original: '말', reason: '까닭', fit: '부합' })
+  const fits = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await fits.find({ type: 'Text', text: /곁가지/ }))?.text).toBe(undefined)
+  await fits.unmount()
+
+  await $.tool.call({ tool: TOOL_FULL, title: '다른 일', original: '말', reason: '까닭', fit: '곁가지' })
+  const side = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await side.find({ type: 'Text', text: /곁가지/ }))?.text).toContain('목표는 그대로')
+  await side.unmount()
+})
+
+test('메시지마다 붙는 지침에 지금 목표가 실리고, 목표가 없으면 처음 정하라고 한다', async ($, on) => {
+  memoryFiles(on)
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.prompt.submit({ text: '첫 말', wait: false, origin: { kind: 'composer' } })
+  const first = seen.find(c => c.includes(TOOL_FULL)) ?? ''
+  expect(first).toContain('fit = 처음')
+  expect(first).not.toContain('지금 목표')
+
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', fit: '처음', goal: '목표A' })
+  await $.prompt.submit({ text: '둘째 말', wait: false, origin: { kind: 'composer' } })
+  const second = seen.find(c => c.includes(TOOL_FULL)) ?? ''
+  expect(second).toContain('지금 목표: 「목표A」')
+  expect(second).toContain('곁가지')
+})

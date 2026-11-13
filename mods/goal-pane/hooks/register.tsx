@@ -8,6 +8,11 @@ const TITLE = '이해한 의도'
 const TOOL = 'set_goal'
 const TOOL_FULL = 'mcp__goal-pane__set_goal'
 
+// 이번 요청이 지금 목표에 맞는지의 판단. 맞으면 그대로, 안 맞으면 목표가 넓어지거나 바뀐 것인지, 목표와 별개인 곁가지 작업이 새로 생긴 것인지 가린다(2026-11-13 사용자).
+// 칸을 따로 둔 까닭: 「바뀔 때만 goal 을 적는다」만으로는 AI가 판단 자체를 건너뛰어, 세션 10개에서 목표가 바뀐 기록이 2번뿐이었다(2026-11-13 측정)
+const FITS = ['처음', '부합', '확장', '변경', '곁가지'] as const
+const FIT_RULE = '부합(지금 목표 안의 일, 목표 그대로) · 확장(목표가 넓어짐) · 변경(목표가 다른 것으로 바뀜) · 곁가지(목표와 별개인 작업이 새로 생김, 목표 그대로). 확장 · 변경이면 goal 에 새 목표를, why 에 사용자의 어느 말 때문인지 적는다.'
+
 // 항목이 바뀌면 shape 꼬리표를 바꾼다: 앞 버전이 남긴 값을 받지 않게 한다
 const goalAtom = atom({ plugin: 'goal-pane', key: 'goal' } as const, null as GoalState | null, { shape: 'goal-2' })
 const requests = atom({ plugin: 'goal-pane', key: 'requests' } as const, [] as RequestEntry[], { shape: 'req-3' })
@@ -26,13 +31,26 @@ const RULE = [
   '의도는 AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는가이고, 메시지마다 다르다. 목표는 사용자의 요청들이 궁극적으로 이루려는 것이고, 거의 바뀌지 않는다.',
   `사용자의 새 메시지를 받으면, 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 를 한 번 불러 적는다: title(의도 한 문장), assumptions(가정: 사용자가 말하지 않았는데 AI 에이전트가 전제하거나 대신 고른 것, 있을 때만), question(확인 질문: 사용자에게 물어야 할 것, 있을 때만), original(근거가 된 사용자의 말 그대로), reason(왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지).`,
   '입력창 위 영역에는 의도 · 가정 · 확인 질문만 보인다. original 과 reason 은 화면에 나오지 않고 나중에 이해를 되짚기 위해 따로 저장된다.',
-  'goal 은 처음 한 번, 그리고 궁극적인 목표 자체가 바뀌었을 때만 적는다. 세션 제목 뒤에 붙으므로 20자 안팎으로 짧게 쓴다. 바뀌었으면 changed 를 true 로 하고 무엇이 왜 바뀌었는지(사용자의 어느 말 때문인지) why 에 적는다. 요청마다 의도가 달라지는 것은 목표가 바뀐 것이 아니다.',
+  `메시지마다 이번 요청이 지금 목표에 맞는지 판단해 fit 에 적는다: ${FIT_RULE} 목표가 아직 없으면 fit 은 처음이고 goal 을 적는다. goal 은 세션 제목 뒤에 붙으므로 20자 안팎으로 짧게 쓴다.`,
   '사용자의 말을 부풀리지 않는다: 「할 수도 있다」를 「한다」로, 「그중 하나」를 「전부」로 바꾸지 않는다. 확인 질문이 있으면 답을 받기 전에는 그 가정대로 진행하지 않는다.',
   '세션 제목은 대괄호 앞은 사용자가, 맨 뒤 대괄호는 이 모드가 바꾼다. AI 에이전트는 제목을 직접 바꾸지 않는다.',
 ].join('\n')
 
-// 메시지마다 붙이는 짧은 지침
-const NUDGE = `입력창 위 영역: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 적는다. title = 의도(AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나, 한 문장), assumptions = 가정(사용자가 말하지 않았는데 전제하거나 대신 고른 것, 있을 때만, 하나씩), question = 확인 질문(사용자에게 물어야 할 것, 있을 때만. 있으면 답 전에는 그 가정대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로, reason = 왜 그렇게 이해했는지(어느 말 · 어떤 앞 맥락 때문인지). 화면에는 의도 · 가정 · 확인 질문만 보이고 original · reason 은 따로 저장된다. goal(사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎, 세션 제목 뒤에 붙음)은 처음과 궁극 목표가 바뀔 때만 적고, 바뀌면 changed true · why 에 까닭. 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
+// 메시지마다 붙이는 짧은 지침. 지금 목표를 실어 보내 AI가 이번 요청과 나란히 놓고 판단하게 한다:
+// 지금 목표가 지침에 없을 때는 AI가 목표를 다시 보지 않아 판단을 건너뛰었다(2026-11-13)
+function nudge(goal: string | undefined): string {
+  const goalPart = goal
+    ? `지금 목표: 「${goal}」. fit = 이번 요청이 이 목표에 맞는지: ${FIT_RULE}`
+    : 'fit = 처음, goal = 사용자의 요청들이 궁극적으로 이루려는 것(20자 안팎, 세션 제목 뒤에 붙음).'
+
+  return `입력창 위 영역: 이 메시지에 답하거나 다른 도구를 쓰기 전에 ${TOOL_FULL} 로 적는다. title = 의도(AI 에이전트가 사용자의 최근 요청을 어떻게 이해했나, 한 문장), assumptions = 가정(사용자가 말하지 않았는데 전제하거나 대신 고른 것, 있을 때만, 하나씩), question = 확인 질문(사용자에게 물어야 할 것, 있을 때만. 있으면 답 전에는 그 가정대로 진행하지 않는다), original = 근거가 된 사용자의 말 그대로, reason = 왜 그렇게 이해했는지(어느 말 · 어떤 앞 맥락 때문인지). 화면에는 의도 · 가정 · 확인 질문만 보이고 original · reason 은 따로 저장된다. ${goalPart} 사용자의 말을 부풀리지 않는다. 답의 맨 위에 이것을 따로 쓰지 않고, 세션 제목은 직접 바꾸지 않는다.`
+}
+
+function fitOf(v: unknown): (typeof FITS)[number] | '' {
+  const s = typeof v === 'string' ? v.trim() : ''
+
+  return (FITS as readonly string[]).includes(s) ? (s as (typeof FITS)[number]) : ''
+}
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
@@ -61,24 +79,33 @@ function toRequest(input: Record<string, unknown>, at: string): RequestEntry | n
   if (!title) return null
   const assumptions = listOf(input.assumptions).length ? listOf(input.assumptions) : listOf(input.guess)
   const question = str(input.question) || str(input.gap) || strList(input.asks).join(' / ')
+  const fit = fitOf(input.fit)
 
   return {
     said_at: at,
     title,
     ...(assumptions.length ? { assumptions } : {}),
     ...(question ? { question } : {}),
+    ...(fit ? { fit } : {}),
     original: str(input.original),
     reason: str(input.reason),
   }
 }
 
-// 목표를 처음 정하거나, 바뀌었을 때만 새 값을 만든다. 그 밖에는 null (그대로 둔다)
+// 목표가 넓어지거나 바뀌었다는 판단인가. fit 이 없던 앞 버전의 changed: true 도 받는다
+function isGoalMove(input: Record<string, unknown>): boolean {
+  const fit = fitOf(input.fit)
+
+  return fit === '확장' || fit === '변경' || (fit === '' && input.changed === true)
+}
+
+// 목표를 처음 정하거나, 넓어지거나 바뀌었을 때만 새 값을 만든다. 부합 · 곁가지는 goal 이 와도 null (그대로 둔다)
 function nextGoal(old: GoalState | null, input: Record<string, unknown>, at: string): GoalState | null {
   const raw = str(input.goal) || str(input.label)
   if (!raw) return null
   const goal = shortGoal(raw)
   if (!old) return { goal, since: at, n: 1, why: '', history: [] }
-  if (input.changed !== true || goal === old.goal) return null
+  if (!isGoalMove(input) || goal === old.goal) return null
 
   return {
     goal,
@@ -165,7 +192,7 @@ type Marking = { right: number[]; wrong: number[]; toggle?: (i: number, kind: Ma
 // 입력창 위 영역 · 카드 · 패널이 같이 쓰는 의도 · 가정 · 확인 질문. 가정과 확인 질문은 있을 때만 줄이 생긴다.
 // 입력창 위 영역에서는 가정 줄마다 오른쪽 끝에 ✓ ✗가 서고(줄 양끝 정렬이라 글 길이와 상관없이 세로로 맞는다),
 // ✓는 초록 「확정」, ✗는 빨간 취소선 「틀림」으로 바뀐다(2026-11-13 사용자: 「확정, 클로드한테 확신 주기」)
-function intentTree({ Box, Text, Button }: Els, r: Pick<RequestEntry, 'title' | 'assumptions' | 'question'>, m: Marking = { right: [], wrong: [] }) {
+function intentTree({ Box, Text, Button }: Els, r: Pick<RequestEntry, 'title' | 'assumptions' | 'question' | 'fit'>, m: Marking = { right: [], wrong: [] }) {
   const counts = [m.right.length ? `확정 ${m.right.length}개` : '', m.wrong.length ? `틀림 ${m.wrong.length}개` : ''].filter(Boolean).join(' · ')
 
   return (
@@ -217,6 +244,15 @@ function intentTree({ Box, Text, Button }: Els, r: Pick<RequestEntry, 'title' | 
           </Box>
         )
       })}
+      {/* 곁가지로 본 판단도 사용자가 확인할 수 있게 보인다. 부합은 보이지 않는다(늘 그런 것이라 줄만 늘어난다) */}
+      {r.fit === '곁가지' && (
+        <Text dimColor>
+          <Text size="caption" dimColor>
+            곁가지{'  '}
+          </Text>
+          목표와 별개인 새 작업으로 봄, 목표는 그대로
+        </Text>
+      )}
       {m.toggle && counts && (
         <Text size="caption" dimColor>
           {counts} → 다음 메시지에 함께 보냅니다
@@ -239,7 +275,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: TOOL,
       description:
-        '사용자가 보는 입력창 위 영역에, AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지(의도)와 가정 · 확인 질문을 적고, 왜 그렇게 이해했는지(근거가 된 말 · 까닭)는 따로 저장한다. 궁극 목표는 처음과 바뀔 때만 적고, 세션 제목 맨 뒤 대괄호에 붙는다. 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
+        '사용자가 보는 입력창 위 영역에, AI 에이전트가 사용자의 최근 요청을 어떻게 이해했는지(의도)와 가정 · 확인 질문을 적고, 왜 그렇게 이해했는지(근거가 된 말 · 까닭)는 따로 저장한다. 이번 요청이 지금 목표에 맞는지(fit)를 매번 판단해 적고, 목표는 처음과 넓어지거나 바뀔 때만 적는다(세션 제목 맨 뒤 대괄호에 붙는다). 사용자의 새 메시지마다 답하기 전에 한 번 부른다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -248,11 +284,11 @@ export const register: Register = on => {
           question: { type: 'string', description: '확인 질문: 확인하지 못해 사용자에게 물어야 할 것. 없으면 비운다.' },
           original: { type: 'string', description: '이번 이해의 근거가 된 사용자의 말. 짧게, 그대로 옮긴다. 화면에는 나오지 않고 저장된다.' },
           reason: { type: 'string', description: '왜 그렇게 이해했는지: 사용자의 어느 말과 앞의 어떤 맥락 때문인지. 화면에는 나오지 않고 저장된다.' },
-          goal: { type: 'string', description: '목표: 사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎. 세션 제목 뒤 대괄호에 붙는다. 처음 한 번과 궁극 목표가 바뀔 때만 적는다.' },
-          changed: { type: 'boolean', description: '궁극 목표 자체가 바뀌었으면 true. 요청마다 의도가 다른 것은 바뀐 것이 아니다.' },
-          why: { type: 'string', description: '목표가 바뀌었다면 무엇이 왜 바뀌었는지, 사용자의 어느 말 때문인지' },
+          fit: { type: 'string', enum: [...FITS], description: `이번 요청이 지금 목표에 맞는지. 처음(아직 목표 없음) · ${FIT_RULE}` },
+          goal: { type: 'string', description: '목표: 사용자의 요청들이 궁극적으로 이루려는 것, 20자 안팎. 세션 제목 뒤 대괄호에 붙는다. fit 이 처음 · 확장 · 변경일 때만 적는다.' },
+          why: { type: 'string', description: '목표가 넓어지거나 바뀌었다면 무엇이 왜 그런지, 사용자의 어느 말 때문인지' },
         },
-        required: ['title', 'original', 'reason'],
+        required: ['title', 'original', 'reason', 'fit'],
       },
       isDeferred: false,
     })
@@ -318,7 +354,8 @@ export const register: Register = on => {
     ].filter(Boolean)
     const extra = parts.length ? [`사용자가 입력창 위 영역에서 앞 의도(「${now?.title ?? ''}」)의 가정을 표시했다. ${parts.join(' ')}`] : []
 
-    const r = await next({ ...e, context: [...(e.context ?? []), ...extra, NUDGE] })
+    const goal = await read($, goalAtom)
+    const r = await next({ ...e, context: [...(e.context ?? []), ...extra, nudge(goal?.goal)] })
     if (parts.length && !r.drop) {
       await update($, marksAtom, () => null)
       await keep($, { at: new Date().toISOString(), kind: '가정 표시', intent: now?.title ?? '', right, wrong }).catch(() => undefined)
@@ -335,6 +372,11 @@ export const register: Register = on => {
     const old = await read($, goalAtom)
     const goal = nextGoal(old, input, at)
     if (!req && !goal) return { deny: '이번 요청을 어떻게 이해했는지(title)를 한 문장으로 적어 주세요.' }
+    // 넓어지거나 바뀌었다고 판단했는데 새 목표가 없으면, 판단과 제목이 어긋난 채 남지 않게 다시 부르게 한다
+    if (old && isGoalMove(input) && !goal) {
+      return { deny: `fit 을 ${fitOf(input.fit) || '변경'}(으)로 판단했다면 goal 에 지금 목표(「${old.goal}」)와 다른 새 목표를, why 에 까닭을 함께 적어 다시 불러 주세요.` }
+    }
+    const fit = fitOf(input.fit)
 
     if (goal) await update($, goalAtom, () => goal)
     const list = req ? await update($, requests, l => [...l, req].slice(-50)) : await read($, requests)
@@ -346,6 +388,7 @@ export const register: Register = on => {
       at,
       kind: goal ? (goal.n === 1 ? '목표 정함' : '목표 바뀜') : '의도',
       goal: now?.goal ?? '',
+      ...(fit ? { fit } : {}),
       ...(goal && goal.n > 1 ? { previous: old?.goal ?? '', why: goal.why } : {}),
       ...(req
         ? { intent: req.title, assumptions: req.assumptions ?? [], question: req.question ?? '', original: req.original, reason: req.reason }
