@@ -181,19 +181,19 @@ test('가정마다 ✗가 있고, 누르면 틀림(빨간 취소선)으로 바�
   await $.tool.call({ tool: TOOL_FULL, title: '두 가정 의도', assumptions: ['첫 가정', '둘째 가정'], original: '말', reason: '까닭' })
 
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(2)
-  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(4)
+  expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
 
   await ui.press({ key: 'wrong-1' })
   const struck = await ui.find({ type: 'Text', text: /^둘째 가정$/ })
   expect(struck?.props.strikethrough).toBe(true)
   expect(struck?.props.color).toBe('error')
   expect((await ui.find({ type: 'Text', text: /^첫 가정$/ }))?.props.strikethrough).toBe(false)
-  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toContain('1개')
+  expect((await ui.find({ type: 'Text', text: /틀림 1개/ }))?.text).toContain('다음 메시지')
 
   await ui.press({ key: 'wrong-1' })
   expect((await ui.find({ type: 'Text', text: /^둘째 가정$/ }))?.props.strikethrough).toBe(false)
-  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
   await ui.unmount()
 })
 
@@ -220,10 +220,10 @@ test('표시한 가정은 다음 메시지에 함께 실려 가고, 기록에 �
   expect(seen.some(c => c.includes('mcp__goal-pane__set_goal'))).toBe(true)
 
   const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
-  expect(lines[lines.length - 1].kind).toBe('틀린 가정')
+  expect(lines[lines.length - 1].kind).toBe('가정 표시')
   expect(lines[lines.length - 1].wrong).toEqual(['가정A', '가정C'])
 
-  expect((await ui.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
   await $.prompt.submit({ text: '그다음 말', wait: false, origin: { kind: 'composer' } })
   expect(seen.some(c => c.includes('틀렸다고 표시한'))).toBe(false)
   await ui.unmount()
@@ -246,7 +246,7 @@ test('새 의도가 오면 앞 의도에 남은 표시는 따라오지 않는다
   await $.tool.call({ tool: TOOL_FULL, title: '새 의도', assumptions: ['새 가정'], original: '말', reason: '까닭' })
   const ui2 = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui2.find({ type: 'Text', text: /^새 가정$/ }))?.props.strikethrough).toBe(false)
-  expect((await ui2.find({ type: 'Text', text: /틀린 가정/ }))?.text).toBe(undefined)
+  expect((await ui2.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
   await ui2.unmount()
   await $.prompt.submit({ text: '말', wait: false, origin: { kind: 'composer' } })
   expect(seen.some(c => c.includes('틀렸다고 표시한'))).toBe(false)
@@ -273,5 +273,41 @@ test('가정 줄 끝에 「확인 필요」를 붙이지 않고, 틀렸다고 �
   expect((await ui.find({ type: 'Text', text: /틀림/ }))?.text).toBe(undefined)
   await ui.press({ key: 'wrong-0' })
   expect((await ui.find({ type: 'Text', text: /틀림/ }))?.text).toContain('틀림')
+  await ui.unmount()
+})
+
+test('✓를 누르면 초록 「확정」이 되고, ✗와 둘 중 하나만 서며, 다음 메시지에 확정 · 틀림이 따로 실려 간다', async ($, on) => {
+  engineDraws(on)
+  const files = memoryFiles(on)
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.tool.call({ tool: TOOL_FULL, title: '확정 의도', assumptions: ['가정P', '가정Q'], original: '말', reason: '까닭' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  await ui.press({ key: 'right-0' })
+  const ok = await ui.find({ type: 'Text', text: /^가정P$/ })
+  expect(ok?.props.color).toBe('success')
+  expect(ok?.props.strikethrough).toBe(false)
+  expect((await ui.find({ type: 'Text', text: /확정$/ }))?.text).toContain('확정')
+
+  // 같은 가정에 ✗를 누르면 ✓가 풀리고 틀림이 된다
+  await ui.press({ key: 'wrong-0' })
+  expect((await ui.find({ type: 'Text', text: /^가정P$/ }))?.props.color).toBe('error')
+  await ui.press({ key: 'right-0' })
+  await ui.press({ key: 'wrong-1' })
+  expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toContain('확정 1개 · 틀림 1개')
+
+  await $.prompt.submit({ text: '다음 말', wait: false, origin: { kind: 'composer' } })
+  const note = seen.find(c => c.includes('가정을 표시했다')) ?? ''
+  expect(note).toContain('맞다고 확정한 것: 1) 가정P')
+  expect(note).toContain('틀렸다고 표시한 것: 1) 가정Q')
+  const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
+  expect(lines[lines.length - 1].right).toEqual(['가정P'])
+  expect(lines[lines.length - 1].wrong).toEqual(['가정Q'])
+  expect((await ui.find({ type: 'Text', text: /다음 메시지에 함께/ }))?.text).toBe(undefined)
   await ui.unmount()
 })
