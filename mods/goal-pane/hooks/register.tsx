@@ -165,6 +165,30 @@ async function markTitle($: EngineInterface, goal: string, isChange: boolean): P
   await $.fs.write(path, JSON.stringify(next))
 }
 
+// 앱을 다시 켜면 세션 상태가 비어, 지침에 「목표 없음」이 나가고 AI가 목표를 처음부터 다시 정했다(2026-11-13 실측).
+// 그래서 세션 상태가 비었을 때는 제목용 파일에 남은 목표를 세션 상태로 되살린다. 파일이 없거나 목표가 비었으면 null
+async function restoreGoal($: EngineInterface): Promise<GoalState | null> {
+  const dir = await homeDir($)
+  if (!dir) return null
+  const id = await $.session.id()
+  const raw = await $.fs.read(`${dir}/제목/${id}.json`).catch(() => '')
+  let saved: Partial<TitleState> = {}
+  try {
+    saved = typeof raw === 'string' && raw ? (JSON.parse(raw) as Partial<TitleState>) : {}
+  } catch {
+    return null
+  }
+  if (typeof saved.goal !== 'string' || !saved.goal) return null
+  const goal: GoalState = { goal: saved.goal, since: '', n: 1, why: '', history: [] }
+  await update($, goalAtom, () => goal)
+
+  return goal
+}
+
+async function currentGoal($: EngineInterface): Promise<GoalState | null> {
+  return (await read($, goalAtom)) ?? (await restoreGoal($).catch(() => null))
+}
+
 type MarkKind = 'right' | 'wrong'
 
 // ✓ 또는 ✗를 누를 때마다 그 가정의 표시를 켜고 끈다. 한 가정에는 둘 중 하나만 선다(✓를 누르면 ✗가 풀린다).
@@ -355,7 +379,7 @@ export const register: Register = on => {
     ].filter(Boolean)
     const extra = parts.length ? [`사용자가 입력창 위 영역에서 앞 의도(「${now?.title ?? ''}」)의 가정을 표시했다. ${parts.join(' ')}`] : []
 
-    const goal = await read($, goalAtom)
+    const goal = await currentGoal($)
     const r = await next({ ...e, context: [...(e.context ?? []), ...extra, nudge(goal?.goal)] })
     if (parts.length && !r.drop) {
       await update($, marksAtom, () => null)
@@ -370,7 +394,7 @@ export const register: Register = on => {
     const input = e as unknown as Record<string, unknown>
     const at = new Date().toISOString()
     const req = toRequest(input, at)
-    const old = await read($, goalAtom)
+    const old = await currentGoal($)
     const goal = nextGoal(old, input, at)
     if (!req && !goal) return { deny: '이번 요청을 어떻게 이해했는지(title)를 한 문장으로 적어 주세요.' }
     // 넓어지거나 바뀌었다고 판단했는데 새 목표가 없으면, 판단과 제목이 어긋난 채 남지 않게 다시 부르게 한다

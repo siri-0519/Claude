@@ -376,3 +376,22 @@ test('메시지마다 붙는 지침에 지금 목표가 실리고, 목표가 없
   expect(second).toContain('지금 목표: 「목표A」')
   expect(second).toContain('곁가지')
 })
+
+test('앱을 다시 켜 세션 상태가 비어도, 제목용 파일의 목표를 되살려 지침에 싣고 「처음」으로 덮어쓰지 않는다', async ($, on) => {
+  const files = memoryFiles(on)
+  files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '앞 목표', flag: 'none', lastSuffix: ' [앞 목표]' }))
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.prompt.submit({ text: '돌아와서 첫 말', wait: false, origin: { kind: 'composer' } })
+  const note = seen.find(c => c.includes(TOOL_FULL)) ?? ''
+  expect(note).toContain('지금 목표: 「앞 목표」')
+  expect(note).not.toContain('fit = 처음')
+
+  // 되살린 뒤에는 AI가 「처음」으로 다른 목표를 적어도 목표가 바뀌지 않는다
+  await $.tool.call({ tool: TOOL_FULL, title: '의도', original: '말', reason: '까닭', fit: '처음', goal: '엉뚱한 목표' })
+  expect(JSON.parse(files.get(`${DIR}/제목/s1.json`) ?? '{}')).toEqual({ goal: '앞 목표', flag: 'none', lastSuffix: ' [앞 목표]' })
+})
