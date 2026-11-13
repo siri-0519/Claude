@@ -303,8 +303,8 @@ test('✓를 누르면 초록 「확정」이 되고, ✗와 둘 중 하나만 �
 
   await $.prompt.submit({ text: '다음 말', wait: false, origin: { kind: 'composer' } })
   const note = seen.find(c => c.includes('가정을 표시했다')) ?? ''
-  expect(note).toContain('맞다고 확정한 것: 1) 가정P')
-  expect(note).toContain('틀렸다고 표시한 것: 1) 가정Q')
+  expect(note).toContain('맞다고 확정한 가정 1개: 「가정P」')
+  expect(note).toContain('틀렸다고 표시한 가정 1개: 「가정Q」')
   const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l))
   expect(lines[lines.length - 1].right).toEqual(['가정P'])
   expect(lines[lines.length - 1].wrong).toEqual(['가정Q'])
