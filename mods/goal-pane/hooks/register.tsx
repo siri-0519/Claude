@@ -310,11 +310,11 @@ export const register: Register = on => {
     const text = (ix: number[]) => ix.map(i => (now?.assumptions ?? [])[i] ?? '').filter(Boolean)
     const right = text(marked.right)
     const wrong = text(marked.wrong)
-    // 「1)」 같은 번호는 가정의 순번인지 개수인지 헷갈려서(2026-11-13 사용자) 개수를 따로 적고 가정 글은 「」로 묶는다
+    // 번호 · 개수 없이 가정 글만 「」로 묶는다. 무엇이 맞고 틀렸는지만 필요하다(2026-11-13 사용자)
     const quoted = (xs: string[]) => `${xs.length}개: ${xs.map(x => `「${x}」`).join(', ')}`
     const parts = [
-      right.length ? `맞다고 확정한 가정 ${quoted(right)}. 사용자가 확정했으니 다시 묻지 말고 그대로 진행한다.` : '',
-      wrong.length ? `틀렸다고 표시한 가정 ${quoted(wrong)}. 이 가정대로 진행하지 말고, 이번 메시지와 함께 바로잡아 반영한다.` : '',
+      right.length ? `맞다고 확정한 가정: ${quoted(right)}. 사용자가 확정했으니 다시 묻지 말고 그대로 진행한다.` : '',
+      wrong.length ? `틀렸다고 표시한 가정: ${quoted(wrong)}. 이 가정대로 진행하지 말고, 이번 메시지와 함께 바로잡아 반영한다.` : '',
     ].filter(Boolean)
     const extra = parts.length ? [`사용자가 입력창 위 영역에서 앞 의도(「${now?.title ?? ''}」)의 가정을 표시했다. ${parts.join(' ')}`] : []
 
