@@ -377,6 +377,22 @@ test('메시지마다 붙는 지침에 지금 목표가 실리고, 목표가 없
   expect(second).toContain('곁가지')
 })
 
+test('메시지마다 붙는 지침에, 새로 만들 결과물 · 고칠 대상을 고를 때는 확인 질문으로 먼저 묻고 기다리라는 말이 실린다', async ($, on) => {
+  memoryFiles(on)
+  let seen: readonly string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    seen = e.context ?? []
+
+    return { text: e.text, context: e.context }
+  })
+  await $.prompt.submit({ text: 'ㅇㅋ', wait: false, origin: { kind: 'composer' } })
+  const note = seen.find(c => c.includes(TOOL_FULL)) ?? ''
+  expect(note).toContain('새로 만들거나 고칠 대상을 골라야 하면')
+  expect(note).toContain('「ㅇㅋ」')
+  expect(note).toContain('작업 도중')
+  expect(note).toContain('답을 받기 전에는 시작하지 않는다')
+})
+
 test('앱을 다시 켜 세션 상태가 비어도, 제목용 파일의 목표를 되살려 지침에 싣고 「처음」으로 덮어쓰지 않는다', async ($, on) => {
   const files = memoryFiles(on)
   files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '앞 목표', flag: 'none', lastSuffix: ' [앞 목표]' }))
