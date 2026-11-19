@@ -22,6 +22,7 @@
    "env": { "CLAUDE_CODE_PLUGIN_DIRS": "C:/Users/<사용자 이름>/work/Claude/mods/goal-pane" }
 
    파일에 이미 "env" 칸이 있으면, 그 안에 "CLAUDE_CODE_PLUGIN_DIRS" 줄 하나만 더한다.
+   모드를 고칠 때마다 앱을 다시 켜지 않으려면 같은 "env" 칸에 "CLAUDE_CODE_PLUGIN_DIR_WATCH": "1" 도 더한다. 데스크톱 앱이 띄우는 세션은 이것이 없으면 모드 폴더를 지켜보지 않는다. 있으면 모드 파일을 저장할 때 다시 불러온다(앱이 이 값을 읽는 것은 켜질 때라, 처음 한 번은 다시 켜야 한다).
 3-2. 세션 제목에 목표를 표시하려면, 같은 파일의 "hooks" 칸에 아래를 더한다. node 가 깔려 있어야 한다. 경로는 3과 같이 바꾼다.
 
    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "node \"C:/Users/<사용자 이름>/work/Claude/mods/goal-pane/title-hook.mjs\"", "timeout": 10 } ] } ]
