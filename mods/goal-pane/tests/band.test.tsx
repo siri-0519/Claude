@@ -393,6 +393,18 @@ test('메시지마다 붙는 지침에, 새로 만들 결과물 · 고칠 대상
   expect(note).toContain('답을 받기 전에는 시작하지 않는다')
 })
 
+test('시험: 이름에 artifact 가 든 도구 호출은 막지 않고 기록 파일에 남기고, 다른 도구는 남기지 않는다', async ($, on) => {
+  const files = memoryFiles(on)
+  await Promise.resolve($.tool.call({ tool: 'Artifact', action: 'list' })).catch(() => undefined)
+  await Promise.resolve($.tool.call({ tool: 'Bash', command: 'ls' })).catch(() => undefined)
+  const lines = (files.get(`${DIR}/기록/s1.jsonl`) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
+  const seen = lines.filter(l => l.kind === '도구 호출 시험')
+  expect(seen.length).toBe(1)
+  expect(seen[0].tool).toBe('Artifact')
+  expect(seen[0].action).toBe('list')
+  expect(seen[0].hasUrl).toBe(false)
+})
+
 test('앱을 다시 켜 세션 상태가 비어도, 제목용 파일의 목표를 되살려 지침에 싣고 「처음」으로 덮어쓰지 않는다', async ($, on) => {
   const files = memoryFiles(on)
   files.set(`${DIR}/제목/s1.json`, JSON.stringify({ goal: '앞 목표', flag: 'none', lastSuffix: ' [앞 목표]' }))

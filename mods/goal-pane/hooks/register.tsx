@@ -438,6 +438,19 @@ export const register: Register = on => {
     next.called ? next(e) : { deny: 'goal-pane: 저장하지 못했습니다. 답은 계속 써도 됩니다.' },
   )
 
+  // 시험(0.12.1, 2026-11-19): 모드가 다른 도구(Artifact) 호출 순간에 끼어들 수 있는지 실제 앱에서 확인한다.
+  // 「새로 만들기 전에 먼저 묻기」를 그 순간에 잡으려면 이것이 되어야 한다. 막거나 바꾸지 않고,
+  // 이름에 artifact 가 든 도구 호출만 이름 · 동작 · url 유무를 기록 파일에 남긴다
+  on('tool.call', async ($, e, next) => {
+    const input = e as unknown as Record<string, unknown>
+    const tool = str(input.tool)
+    if (/artifact/i.test(tool)) {
+      await keep($, { at: new Date().toISOString(), kind: '도구 호출 시험', tool, action: str(input.action) || 'publish', hasUrl: Boolean(str(input.url)) }).catch(() => undefined)
+    }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // 입력창 바로 위 영역(엔진 이름 AbovePrompt): 의도 · 가정 · 확인 질문만. 목표는 세션 제목에 있다. 접기([-])는 엔진이 그린다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
